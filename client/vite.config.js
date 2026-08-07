@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     port: 5000,
     host: 'localhost',
-    strictPort: true,
+    strictPort: false,
     // Allow access from any host (Docker host, LAN, etc.). Safe in dev only.
     allowedHosts: true,
     proxy: {

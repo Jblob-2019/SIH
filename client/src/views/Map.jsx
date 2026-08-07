@@ -50,6 +50,15 @@ export default function Map() {
   const lakesList   = (lakes.data   && lakes.data.lakes)     || [];
   const sensorList  = (sensors.data && sensors.data.sensors) || [];
 
+  // Auto-refresh data every 10s so points reappear if backend restarts
+  useEffect(() => {
+    const id = setInterval(() => {
+      lakes.refetch();
+      sensors.refetch();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [lakes, sensors]);
+
   // spread-simulation clock
   useEffect(() => {
     if (!spreadOpen || paused) return;

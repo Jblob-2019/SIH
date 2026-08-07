@@ -4,7 +4,9 @@
   "private": true,
   "description": "Hydraulic Intelligence Command — production-ready React + Node stack",
   "scripts": {
+    "postinstall": "npm run install:all",
     "install:all": "npm install --include=dev && npm --prefix server install && npm --prefix client install --include=dev",
+    "predev": "node check-deps.js",
     "dev": "concurrently -n API,WEB -c cyan,magenta \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",

@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5000,
-    host: '127.0.0.1',
+    host: 'localhost',
     strictPort: true,
     // Allow access from any host (Docker host, LAN, etc.). Safe in dev only.
     allowedHosts: true,

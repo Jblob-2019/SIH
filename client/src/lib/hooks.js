@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 
 /**
  * useApi — small data-fetching hook.
@@ -8,7 +8,8 @@ export function useApi(fn, deps = []) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const [tick, setTick] = useState(0);
 
-  const refetch = () => setTick(t => t + 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const refetch = useCallback(() => setTick(t => t + 1), []);
 
   useEffect(() => {
     let live = true;

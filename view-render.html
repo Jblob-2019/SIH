@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0b1326" />
+<title>Hydraulic Intelligence Command — AquaMind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --surface:#0b1326;
+    --surface-container:#171f33;
+    --surface-container-high:#222a3e;
+    --surface-tint:#89ceff;
+    --on-surface:#dbe2fd;
+    --on-surface-variant:#c0c7cf;
+    --outline-variant:#40484e;
+    --secondary:#4edea3;
+    --tertiary-container:#ffb690;
+    --error:#ffb4ab;
+    --r:.25rem;
+    --r-sm:.125rem;
+    --ease:cubic-bezier(.2,0,0,1);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Helvetica Neue,Arial,sans-serif;
+    background:var(--surface);
+    color:var(--on-surface);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  /* VIGNETTE — full-bleed dark surface, hex pattern, copy + progress */
+  .splash{
+    position:fixed;inset:0;
+    display:grid;place-items:center;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 40%, rgba(137,206,255,.06), transparent 70%),
+      var(--surface);
+    overflow:hidden;
+  }
+  /* Hex grid behind copy */
+  .splash::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='52' viewBox='0 0 60 52' fill='none'><path d='M30 1 58 17v18L30 51 2 35V17z' stroke='%2389ceff' stroke-opacity='.045' stroke-width='1'/></svg>");
+    background-size:60px 52px;
+    mask-image:radial-gradient(ellipse 70% 60% at 50% 50%, #000 30%, transparent 80%);
+    -webkit-mask-image:radial-gradient(ellipse 70% 60% at 50% 50%, #000 30%, transparent 80%);
+    opacity:.9;
+  }
+  /* Subtle ambient light beam */
+  .splash::after{
+    content:"";position:absolute;left:50%;top:0;
+    width:1px;height:100%;
+    background:linear-gradient(to bottom, transparent, rgba(137,206,255,.18) 50%, transparent);
+    filter:blur(1px);
+    transform:translateX(-50%);
+  }
+  .stack{
+    position:relative;z-index:1;
+    display:flex;flex-direction:column;align-items:center;gap:18px;
+    padding:24px;
+    width:min(92vw,420px);
+    text-align:center;
+  }
+  .mark{
+    width:56px;height:56px;border-radius:var(--r);
+    background:var(--surface-tint);color:var(--surface);
+    display:grid;place-items:center;
+    box-shadow:0 0 0 1px rgba(137,206,255,.25), 0 12px 40px rgba(137,206,255,.18);
+    /* 1. fade + scale in */
+    animation: markIn .6s var(--ease) .05s backwards;
+  }
+  .mark svg{width:30px;height:30px;display:block}
+  .label{
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+    animation: labelIn .5s var(--ease) .25s backwards;
+  }
+  .eyebrow{
+    font:500 10px/12px 'JetBrains Mono',ui-monospace,monospace;
+    letter-spacing:.18em;text-transform:uppercase;
+    color:var(--surface-tint);
+  }
+  .heading{
+    font:600 22px/28px Geist,Inter,sans-serif;
+    letter-spacing:-.02em;
+    color:var(--on-surface);
+  }
+  .sub{
+    font:400 13px/18px Inter,sans-serif;
+    color:var(--on-surface-variant);
+    max-width:340px;
+  }
+  /* Progress bar — three segmented pulses, restrained */
+  .meter{
+    width:240px;height:2px;margin-top:6px;
+    background:var(--outline-variant);
+    border-radius:var(--r-sm);
+    overflow:hidden;
+    position:relative;
+    animation: meterIn .5s var(--ease) .45s backwards;
+  }
+  .meter .fill{
+    position:absolute;left:0;top:0;bottom:0;
+    width:0%;
+    background:linear-gradient(90deg, var(--secondary), var(--surface-tint));
+    box-shadow:0 0 12px rgba(137,206,255,.45);
+    animation: fill 1.35s cubic-bezier(.5,0,.2,1) .5s forwards;
+  }
+  /* Token-level telemetry ticker */
+  .telemetry{
+    display:flex;gap:18px;
+    font:500 10.5px/14px 'JetBrains Mono',ui-monospace,monospace;
+    color:var(--on-surface-variant);
+    letter-spacing:.06em;text-transform:uppercase;
+    animation: labelIn .5s var(--ease) .55s backwards;
+  }
+  .telemetry span{display:inline-flex;align-items:center;gap:6px}
+  .telemetry i{width:6px;height:6px;border-radius:9999px;background:var(--secondary);box-shadow:0 0 8px rgba(78,222,163,.7)}
+  .telemetry i.warn{background:var(--tertiary-container);box-shadow:0 0 8px rgba(255,182,144,.7)}
+  .telemetry i.crit{
+    background:var(--error);box-shadow:0 0 8px rgba(255,180,171,.7);
+    animation: pulseDot 1s ease-in-out infinite;
+  }
+  /* Exit sequence */
+  .splash.leaving{
+    animation: outFade .35s var(--ease) forwards;
+  }
+  .splash.leaving .mark,
+  .splash.leaving .label,
+  .splash.leaving .meter,
+  .splash.leaving .telemetry{
+    animation: outUp .35s var(--ease) forwards;
+  }
+  /* Keyframes — clamped durations, all transform/opacity */
+  @keyframes markIn{
+    from{opacity:0;transform:translateY(8px) scale(.94)}
+    to{opacity:1;transform:none}
+  }
+  @keyframes labelIn{
+    from{opacity:0;transform:translateY(6px)}
+    to{opacity:1;transform:none}
+  }
+  @keyframes meterIn{
+    from{opacity:0;transform:translateY(4px)}
+    to{opacity:1;transform:none}
+  }
+  @keyframes fill{from{width:0%}to{width:100%}}
+  @keyframes pulseDot{
+    0%,100%{opacity:.45;transform:scale(.85)}
+    50%{opacity:1;transform:scale(1.1)}
+  }
+  @keyframes outFade{to{opacity:0}}
+  @keyframes outUp{to{opacity:0;transform:translateY(-6px)}}
+
+  /* Reduced motion — strip entrances, keep state changes instant */
+  @media (prefers-reduced-motion: reduce){
+    .mark,.label,.meter,.telemetry,
+    .meter .fill,
+    .telemetry i.crit{animation:none !important}
+    .meter .fill{width:100%}
+  }
+</style>
+</head>
+<body>
+  <main class="splash" id="splash" aria-live="polite" aria-busy="true">
+    <div class="stack">
+      <div class="mark" aria-hidden="true">
+        <!-- brand hex glyph (matches hydraulic-intelligence-command.html) -->
+        <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <path d="M16 3 28 10v12L16 29 4 22V10z"/>
+          <path d="M16 9.5 23 13.5v5L16 22.5 9 18.5v-5z" opacity=".8"/>
+          <circle cx="16" cy="16" r="1.4" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <div class="label">
+        <span class="eyebrow">AquaMind · HIC 04</span>
+        <span class="heading">Hydraulic Intelligence Command</span>
+        <span class="sub">Establishing secure link to the National Lake Telemetry Network…</span>
+      </div>
+      <div class="meter" aria-hidden="true"><span class="fill"></span></div>
+      <div class="telemetry" aria-hidden="true">
+        <span><i></i>Sensors online</span>
+        <span><i class="warn"></i>4 alerts</span>
+        <span><i class="crit"></i>1 critical</span>
+      </div>
+    </div>
+  </main>
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const dest = 'hydraulic-intelligence-command.html#map';
+  const splash = document.getElementById('splash');
+  const start = performance.now();
+  const MIN_VISIBLE = 700;       // never flash past the eye
+  const MAX_VISIBLE = 1900;      // don't strand the user
+  function go(){
+    if (document.visibilityState === 'hidden') {
+      // wait until they come back, so we don't navigate from a hidden tab
+      document.addEventListener('visibilitychange', function h(){ if (document.visibilityState !== 'hidden'){ document.removeEventListener('visibilitychange', h); go(); }});
+      return;
+    }
+    if (!reduce) splash.classList.add('leaving');
+    setTimeout(() => { window.location.replace(dest); }, reduce ? 0 : 320);
+  }
+  // idle the load — pump the progress bar to ~85–100% before handoff
+  setTimeout(go, MIN_VISIBLE + (reduce ? 0 : 1100));
+  // hard cap so a slow CDN never strands the user staring at the splash
+  setTimeout(go, MAX_VISIBLE);
+})();
+</script>
+</body>
+</html>

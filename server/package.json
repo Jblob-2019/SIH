@@ -1,0 +1,18 @@
+{
+  "name": "aquamind-hic-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AquaMind HIC backend API",
+  "main": "src/index.js",
+  "scripts": {
+    "dev":   "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cors":   "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan":  "^1.10.0",
+    "nanoid":  "^5.0.9"
+  }
+}

@@ -57,7 +57,8 @@ export default function Map() {
       sensors.refetch();
     }, 10000);
     return () => clearInterval(id);
-  }, [lakes, sensors]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // spread-simulation clock
   useEffect(() => {

@@ -59,6 +59,7 @@ router.get('/reports',        wrap(async (_req, res) => res.json({ reports: awai
 router.get('/citizen',        wrap(async (_req, res) => res.json({ tickets: await S.citizen() })));
 
 // assistant
+router.get('/assistant/models', wrap(async (_req, res) => res.json(await S.getOllamaModels())));
 router.post('/assistant', wrap(async (req, res) => res.json(await S.assistant(req.body || {}))));
 
 module.exports = router;

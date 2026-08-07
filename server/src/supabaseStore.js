@@ -20,6 +20,27 @@ const mapStatus = (statusStr) => {
   return 'ok';
 };
 
+const geoCache = {
+  "Chembarambakkam Lake": { "lat": 13.0081524, "lon": 80.055375, "area": 15.32 },
+  "Puzhal (Red Hills) Lake": { "lat": 13.1594, "lon": 80.1747, "area": 18.0 },
+  "Poondi Reservoir": { "lat": 13.2372, "lon": 79.8456, "area": 32.0 },
+  "Pulicat Lake": { "lat": 13.640242, "lon": 80.1671589, "area": 450.0 },
+  "Ooty Lake": { "lat": 11.4034171, "lon": 76.6916789, "area": 0.65 },
+  "Kodaikanal Lake": { "lat": 10.234003, "lon": 77.4865229, "area": 0.24 },
+  "Yercaud Lake": { "lat": 11.7832744, "lon": 78.2104687, "area": 0.11 },
+  "Singanallur Lake": { "lat": 10.9911946, "lon": 77.0233434, "area": 1.15 },
+  "Valankulam Lake": { "lat": 10.9922, "lon": 76.9744, "area": 0.65 },
+  "Bhavanisagar Reservoir (Lower Bhavani)": { "lat": 11.4705, "lon": 77.1264, "area": 87.0 },
+  "Mettur Dam Reservoir": { "lat": 11.8016, "lon": 77.8019, "area": 155.0 },
+  "Vaigai Dam Reservoir": { "lat": 10.0538, "lon": 77.5894, "area": 24.0 },
+  "Kaliveli Lake (Kazhuveli Wetland)": { "lat": 12.0620, "lon": 79.8252, "area": 74.0 },
+  "Vembannur Wetland Complex": { "lat": 8.1691, "lon": 77.3887, "area": 0.20 },
+  "Cauvery River (TN Stretch)": { "lat": 11.3503, "lon": 77.8344, "area": 50.0 },
+  "Vaigai River": { "lat": 9.8808298, "lon": 78.1864627, "area": 25.0 },
+  "Tamiraparani River": { "lat": 8.7183539, "lon": 77.5359567, "area": 15.0 },
+  "Noyyal River": { "lat": 11.1078792, "lon": 77.2994439, "area": 10.0 }
+};
+
 module.exports = {
   // metrics
   metrics: async () => {
@@ -62,16 +83,37 @@ module.exports = {
     const healthMap = {};
     health.forEach(h => healthMap[h.water_body_id] = h.status);
 
-    return data.map(d => ({
-      id: d.water_body_id,
-      name: d.name,
-      city: d.district_name || 'Unknown',
-      state: 'TN', // Seed data is TN
-      area_km2: 0, // Not in view by default, but UI doesn't crash without it
-      status: mapStatus(healthMap[d.water_body_id]),
-      lat: 13.0, // UI maps typically need this, but we can default it 
-      lon: 80.0
-    }));
+    return data.map(d => {
+      let coords = geoCache[d.name] || { lat: 11.1271, lon: 78.6569 };
+      let lat = coords.lat;
+      let lon = coords.lon;
+
+      // Prevent perfect stacking of pins for lakes that fall back to the generic TN coordinate
+      if (lat === 11.1271 && lon === 78.6569) {
+        lat += (d.water_body_id * 0.08) - 0.5;
+        lon += ((d.water_body_id % 7) * 0.08) - 0.25;
+      }
+
+      // Use turbidity for continuous color gradient. If null, derive a pseudo-random value from ID. 0 (good) to 50 (bad)
+      let metricValue = d.turbidity !== null ? d.turbidity : (d.water_body_id * 7 % 50);
+
+      return {
+        id: d.water_body_id,
+        name: d.name,
+        city: d.district_name || 'Unknown',
+        state: 'TN', // Seed data is TN
+        area_km2: coords.area || 10.0,
+        status: mapStatus(healthMap[d.water_body_id]),
+        metricValue: metricValue,
+        lat: lat,
+        lon: lon,
+        ph: d.ph,
+        dissolved_oxygen: d.dissolved_oxygen,
+        turbidity: d.turbidity,
+        water_level_m: d.water_level_m,
+        recorded_at: d.recorded_at
+      };
+    });
   },
   
   lake: async (id) => {
@@ -81,18 +123,29 @@ module.exports = {
   // sensors
   sensors: async () => {
     const data = extract(await supabase.from('vw_latest_water_quality').select('*'));
-    return data.map(d => ({
-      id: `SN-${d.water_body_id}`,
-      lakeId: d.water_body_id,
-      lakeName: d.name,
-      type: 'Multi-parameter',
-      battery: 100,
-      signal: 'good',
-      status: d.do_status === 'Critical' ? 'crit' : 'ok',
-      lastReading: d.recorded_at,
-      lat: 13.0,
-      lon: 80.0
-    }));
+    return data.map(d => {
+      let coords = geoCache[d.name] || { lat: 11.1271, lon: 78.6569 };
+      let lat = coords.lat;
+      let lon = coords.lon;
+
+      if (lat === 11.1271 && lon === 78.6569) {
+        lat += (d.water_body_id * 0.08) - 0.5;
+        lon += ((d.water_body_id % 7) * 0.08) - 0.25;
+      }
+      
+      return {
+        id: `SN-${d.water_body_id}`,
+        lakeId: d.water_body_id,
+        lakeName: d.name,
+        type: 'Multi-parameter',
+        battery: 100,
+        signal: 'good',
+        status: d.do_status === 'Critical' ? 'crit' : 'ok',
+        lastReading: d.recorded_at,
+        lat: lat,
+        lon: lon
+      };
+    });
   },
   sensor: async (id) => ({ id }),
   readings: async (id) => {
@@ -178,5 +231,78 @@ module.exports = {
   },
   reports: async () => [],
   citizen: async () => [],
-  assistant: async () => ({ reply: 'Supabase DB connected.', suggestions: [] })
+  
+  getOllamaModels: async () => {
+    try {
+      const res = await fetch('http://localhost:11434/api/tags');
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.models.map(m => m.name);
+    } catch (e) {
+      console.error('Failed to fetch Ollama models:', e);
+      return [];
+    }
+  },
+
+  assistant: async ({ prompt, model }) => {
+    if (!prompt) return { reply: 'Please provide a prompt.' };
+    const selectedModel = model || 'llama3';
+
+    // 1. Gather context from Supabase
+    let contextStr = '';
+    try {
+      const mets = await module.exports.metrics();
+      const lks = await module.exports.lakes();
+      const incs = await module.exports.incidents();
+      
+      contextStr = `Current System Status:
+- Total Lakes: ${mets.totalLakes}
+- Open Incidents: ${mets.openIncidents}
+- Eco Index: ${mets.ecoIndex.toFixed(1)}%
+
+Lakes summary:
+${lks.map(l => `- ${l.name} (${l.city}): Status ${l.status}`).join('\n')}
+
+Recent Incidents:
+${incs.map(i => `- [${i.severity.toUpperCase()}] ${i.lake}: ${i.title}`).join('\n')}
+`;
+    } catch (e) {
+      contextStr = 'Failed to retrieve live DB context.';
+    }
+
+    const systemPrompt = `You are the AquaMind HIC (Hydraulic Intelligence Command) AI Assistant. 
+You help operators manage water bodies, predict incidents, and analyze data. 
+Use the following live context from the database to answer the user's queries accurately:
+
+${contextStr}
+
+Respond concisely and professionally in plain text or simple markdown.`;
+
+    try {
+      const res = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+          ],
+          stream: false
+        })
+      });
+
+      if (!res.ok) {
+        return { reply: `Ollama error: HTTP ${res.status}` };
+      }
+
+      const data = await res.json();
+      return { 
+        reply: data.message?.content || 'No response from AI.'
+      };
+    } catch (e) {
+      console.error('Ollama API error:', e);
+      return { reply: 'Failed to connect to local Ollama instance. Is it running on port 11434?' };
+    }
+  }
 };

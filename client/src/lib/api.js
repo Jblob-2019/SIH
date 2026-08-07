@@ -43,6 +43,7 @@ export const api = {
   emergency:    () => request('/api/emergency'),
   reports:      () => request('/api/reports'),
   citizen:      () => request('/api/citizen'),
-  assistant:    (prompt) => request('/api/assistant', { method: 'POST', body: { prompt } }),
+  getModels:    () => request('/api/assistant/models'),
+  assistant:    (prompt, model) => request('/api/assistant', { method: 'POST', body: { prompt, model } }),
   health:       () => request('/api/health')
 };

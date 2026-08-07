@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Topbar   from './components/Topbar.jsx';
+import Login    from './views/Login.jsx';
 
 import Dashboard    from './views/Dashboard.jsx';
+import CitizenDashboard from './views/CitizenDashboard.jsx';
 import Map          from './views/Map.jsx';
 import Sensors      from './views/Sensors.jsx';
 import Lakes        from './views/Lakes.jsx';
@@ -48,6 +50,7 @@ function getRoute() {
 }
 
 export default function App() {
+  const [user, setUser] = useState(null);
   const [route, setRoute] = useState(getRoute());
   const [metrics, setMetrics] = useState(null);
   const [online, setOnline] = useState(false);
@@ -84,11 +87,20 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
-  const View = VIEWS[route];
+  let View = VIEWS[route] || Dashboard;
+  
+  // Enforce citizen dashboard override
+  if (user && user.role === 'citizen' && route === 'dashboard') {
+    View = CitizenDashboard;
+  }
+
+  if (!user) {
+    return <Login onLogin={setUser} />;
+  }
 
   return (
     <div className="app">
-      <Sidebar active={route} metrics={metrics} online={online} />
+      <Sidebar active={route} metrics={metrics} online={online} user={user} onLogout={() => setUser(null)} />
       <main className="main">
         <Topbar active={route} />
         <div className="content">

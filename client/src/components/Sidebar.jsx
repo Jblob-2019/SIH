@@ -74,7 +74,7 @@ const Ico = ({ name }) => {
   }
 };
 
-export default function Sidebar({ active, metrics, online }) {
+export default function Sidebar({ active, metrics, online, user, onLogout }) {
   const [collapsed, setCollapsed] = useState(false);
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -86,10 +86,22 @@ export default function Sidebar({ active, metrics, online }) {
         </div>
       </div>
       <nav className="nav">
-        {NAV.map(group => (
+        {NAV.map(group => {
+          // Filter items based on role
+          const filteredItems = group.items.filter(it => {
+            if (!user || user.role === 'admin') return true;
+            if (user.role === 'citizen') {
+              return ['dashboard', 'map', 'lakes', 'citizen', 'biodiversity'].includes(it.id);
+            }
+            return false;
+          });
+
+          if (filteredItems.length === 0) return null;
+
+          return (
           <div className="nav-group" key={group.head}>
             <div className="head">{group.head}</div>
-            {group.items.map(it => {
+            {filteredItems.map(it => {
               const badge = badgeFor(it.id, metrics);
               return (
                 <a key={it.id}
@@ -103,14 +115,18 @@ export default function Sidebar({ active, metrics, online }) {
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </nav>
       <div className="side-foot">
-        <div className="avatar">RK</div>
-        <div className="user-min">
-          <div className="nm">R. Kapoor</div>
-          <div className="ro">CMD L2 · National</div>
+        <div className="avatar">{user?.role === 'admin' ? 'RK' : 'CT'}</div>
+        <div className="user-min" style={{ flex: 1 }}>
+          <div className="nm">{user?.role === 'admin' ? 'R. Kapoor' : 'Citizen'}</div>
+          <div className="ro">{user?.role === 'admin' ? 'CMD L2 · National' : 'Public Access'}</div>
         </div>
+        <button className="btn small" onClick={onLogout} style={{ padding: '4px 8px', fontSize: 11 }}>Logout</button>
+      </div>
+      <div className="side-foot" style={{ borderTop: 'none', paddingTop: 0 }}>
         <div className="live-pill" title={online ? 'API reachable' : 'API unreachable'}>
           <span className="dot" style={online ? {} : { background: 'var(--error)', boxShadow: '0 0 6px var(--error)' }} />
           {online ? 'Live · API' : 'Offline'}

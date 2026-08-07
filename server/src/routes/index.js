@@ -26,8 +26,8 @@ router.get('/', (_req, res) => res.json({
 // alias /health under /api for the Vite proxy path
 router.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
-// inline route handlers — all hit the in-memory store
-const S = require('../../data/store');
+// inline route handlers — all hit the live Supabase store
+const S = require('../supabaseStore');
 
 // metrics
 router.get('/metrics', wrap(async (_req, res) => res.json(await S.metrics())));

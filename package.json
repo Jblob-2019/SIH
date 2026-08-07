@@ -4,12 +4,12 @@
   "private": true,
   "description": "Hydraulic Intelligence Command — production-ready React + Node stack",
   "scripts": {
-    "install:all":   "npm install --include=dev && npm --prefix server install && npm --prefix client install --include=dev",
-    "dev":           "concurrently -n API,WEB -c cyan,magenta \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
-    "dev:server":    "npm --prefix server run dev",
-    "dev:client":    "npm --prefix client run dev",
-    "build":         "npm --prefix client run build",
-    "start":         "npm --prefix server start"
+    "install:all": "npm install --include=dev && npm --prefix server install && npm --prefix client install --include=dev",
+    "dev": "concurrently -n API,WEB -c cyan,magenta \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

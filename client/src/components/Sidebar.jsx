@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 /* ============================================================
    Sidebar — brand + nav + footer + live pill
@@ -75,9 +75,10 @@ const Ico = ({ name }) => {
 };
 
 export default function Sidebar({ active, metrics, online }) {
+  const [collapsed, setCollapsed] = useState(false);
   return (
-    <aside className="sidebar">
-      <div className="brand">
+    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <div className="brand" onClick={() => setCollapsed(!collapsed)} style={{ cursor: 'pointer' }} title="Toggle Sidebar">
         <div className="brand-mark">A</div>
         <div className="brand-text">
           <div className="t1">AquaMind</div>

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/hooks.js';
+import { MapContainer, TileLayer, CircleMarker, Tooltip, LayersControl, LayerGroup, ZoomControl } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 
-/* Live GIS Map — ported verbatim from the original template.
-   Hex grid, alert zones, sensor nodes drawn from API; spread-simulation
-   panel + controls + legend all preserved. */
+/* Live GIS Map — converted to interactive Leaflet Map */
 export default function Map() {
   const lakes   = useApi(api.lakes);
   const sensors = useApi(api.sensors);
@@ -12,15 +12,10 @@ export default function Map() {
   const [speed, setSpeed] = useState(1);
   const [paused, setPaused] = useState(false);
   const [tPlus, setTPlus] = useState(0);
+  const [scenario, setScenario] = useState('active');
 
   const lakesList   = (lakes.data   && lakes.data.lakes)     || [];
   const sensorList  = (sensors.data && sensors.data.sensors) || [];
-
-  // simple lat/lon -> svg projection (covers roughly lat 8..34, lon 68..96)
-  const project = (lat, lon) => ({
-    x: ((lon - 68) / (96 - 68)) * 1200,
-    y: 600 - ((lat - 8) / (34 - 8)) * 600
-  });
 
   // spread-simulation clock
   useEffect(() => {
@@ -45,57 +40,78 @@ export default function Map() {
             <span className="tag">Alerts</span>
             <span className="tag">Forecast</span>
           </div>
-          <button className="btn" id="spreadToggle" data-action="spread" onClick={() => setSpreadOpen(o => !o)}>⤴ Spread sim</button>
+          <button className={`btn ${spreadOpen ? 'active' : ''}`} id="spreadToggle" data-action="spread" onClick={() => setSpreadOpen(o => !o)}>⤴ Spread sim</button>
           <button className="btn">Layers ▾</button>
           <button className="btn pri">Filter</button>
         </div>
       </div>
 
       <div className="map-wrap" style={{ height: 'calc(100vh - 220px)', minHeight: 560 }} id="mapWrap">
-        <svg className="map-svg" viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice">
-          {/* hex grid background */}
-          {Array.from({ length: 24 }, (_, i) =>
-            Array.from({ length: 12 }, (_, j) => (
-              <polygon key={`${i}-${j}`}
-                className="hex"
-                points="20,0 40,12 40,30 20,42 0,30 0,12"
-                transform={`translate(${i * 50 + (j % 2) * 25},${j * 36})`}
-                fill="none" stroke="rgba(137,206,255,0.08)" strokeWidth="1"
+        
+        <MapContainer center={[21.0, 78.5]} zoom={5} minZoom={4} style={{ height: '100%', width: '100%', zIndex: 1 }} zoomControl={false}>
+          <ZoomControl position="bottomright" />
+          <LayersControl position="topright">
+            <LayersControl.BaseLayer checked name="OpenStreetMap (Default)">
+              <TileLayer
+                attribution='&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-            ))
-          )}
-          {/* alert zones (sample polygons) */}
-          <polygon className="alert-zone crit" points="280,260 360,240 380,310 320,330" />
-          <polygon className="alert-zone"      points="640,360 740,340 770,400 690,420" />
-          {/* lakes (with halos + labels) */}
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="OpenTopoMap (Terrain)">
+              <TileLayer
+                attribution='&copy; <a href="https://opentopomap.org">OpenTopoMap</a>'
+                url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+                maxZoom={17}
+              />
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="Esri World Imagery (Ocean)">
+              <TileLayer
+                attribution='Tiles &copy; Esri'
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                maxZoom={19}
+              />
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="CartoDB Minimal (Light)">
+              <TileLayer
+                attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                maxZoom={20}
+              />
+            </LayersControl.BaseLayer>
+          </LayersControl>
+
+          {/* Lakes */}
           {lakesList.map(l => {
-            const p = project(l.lat, l.lon);
-            const fill = l.status === 'crit' ? 'var(--error)' : l.status === 'warn' ? 'var(--tertiary-container)' : 'var(--secondary)';
+            const color = l.status === 'crit' ? '#ff4d4f' : l.status === 'warn' ? '#faad14' : '#52c41a';
             return (
-              <g key={l.id}>
-                <circle cx={p.x} cy={p.y} r={28} fill={fill} opacity="0.18" />
-                <circle cx={p.x} cy={p.y} r={12} fill={fill} opacity="0.4" />
-                <circle cx={p.x} cy={p.y} r={5}  fill={fill} />
-                <text x={p.x} y={p.y - 18} textAnchor="middle" fill="#dbe2fd" font="600 10px JetBrains Mono">{l.name}</text>
-              </g>
+              <LayerGroup key={l.id}>
+                <CircleMarker center={[l.lat, l.lon]} radius={28} pathOptions={{ fillColor: color, fillOpacity: 0.18, color: 'transparent' }} />
+                <CircleMarker center={[l.lat, l.lon]} radius={12} pathOptions={{ fillColor: color, fillOpacity: 0.4, color: 'transparent' }} />
+                <CircleMarker center={[l.lat, l.lon]} radius={5} pathOptions={{ fillColor: color, fillOpacity: 1, color }}>
+                  <Tooltip direction="top" offset={[0, -10]} opacity={1}>
+                    <strong>{l.name}</strong><br/>Status: {l.status.toUpperCase()}
+                  </Tooltip>
+                </CircleMarker>
+              </LayerGroup>
             );
           })}
-          {/* sensors */}
+
+          {/* Sensors */}
           {sensorList.map(s => {
-            const p = project(s.lat, s.lon);
-            const cls = s.signal === 'offline' ? 'crit' : s.signal === 'weak' ? 'warn' : 'ok';
-            return <circle key={s.id} cx={p.x} cy={p.y} r={3} className={'sensor-node ' + cls} />;
+            const color = s.signal === 'offline' ? '#ff4d4f' : s.signal === 'weak' ? '#faad14' : '#52c41a';
+            return (
+              <CircleMarker key={s.id} center={[s.lat, s.lon]} radius={3} pathOptions={{ fillColor: color, fillOpacity: 1, color }}>
+                <Tooltip direction="top" offset={[0, -5]} opacity={1}>
+                  <strong>{s.lakeName} ({s.type})</strong><br/>Signal: {s.signal}
+                </Tooltip>
+              </CircleMarker>
+            );
           })}
-          {/* cluster labels for major hubs */}
-          <text x="320" y="280" className="cluster-label">Bellandur</text>
-          <text x="820" y="380" className="cluster-label">Chilika</text>
-          <text x="200" y="180" className="cluster-label">Dal</text>
-          <text x="540" y="540" className="cluster-label">Vembanad</text>
-        </svg>
+        </MapContainer>
 
         {/* overlay panel */}
-        <div className="map-overlay-panel">
-          <div className="card glass" style={{ padding: 11 }}>
+        <div className="map-overlay-panel" style={{ zIndex: 1000, pointerEvents: 'none' }}>
+          <div className="card glass" style={{ padding: 11, pointerEvents: 'auto' }}>
             <div className="card-h" style={{ marginBottom: 6 }}>
               <h3>Selected · Bellandur</h3>
               <span className="right" style={{ color: 'var(--error)' }}>CRITICAL</span>
@@ -114,7 +130,7 @@ export default function Map() {
         </div>
 
         {/* spread-simulation side panel */}
-        <aside className="spread-panel" id="spreadPanel" aria-label="Pollution spread simulation panel" hidden={!spreadOpen}>
+        <aside className="spread-panel" id="spreadPanel" aria-label="Pollution spread simulation panel" hidden={!spreadOpen} style={{ zIndex: 1000 }}>
           <div className="card glass spread-glass">
             <div className="card-h">
               <h3>Spread Simulation</h3>
@@ -132,13 +148,15 @@ export default function Map() {
             <div className="spread-ctrl-row" style={{ display: 'flex', gap: 5, marginTop: 8 }}>
               <button className="btn small ghost" id="spreadReplay" onClick={() => setTPlus(0)}>↻ Replay</button>
               <button className="btn small"       id="spreadPause"  onClick={() => setPaused(p => !p)}>{paused ? 'Resume' : 'Pause'}</button>
-              <button className="btn small pri"   id="spreadIntervene" style={{ marginLeft: 'auto' }}>Intervene</button>
+              <button className="btn small pri"   id="spreadIntervene" style={{ marginLeft: 'auto' }} onClick={() => setScenario(s => s === 'active' ? 'mitigated' : 'active')}>
+                {scenario === 'active' ? 'Intervene' : 'Cancel Intervention'}
+              </button>
             </div>
 
             <div className="spread-section-head">Scenario</div>
-            <div className="scenario-row"><span className="sc-ic">●</span><div><div className="sc-nm">Baseline drift</div><div className="sc-sub">no intervention · reach 8 lakes / 12h</div></div></div>
-            <div className="scenario-row active"><span className="sc-ic crit">●</span><div><div className="sc-nm">Active simulation</div><div className="sc-sub">chemical spill · Bellandur S-04</div></div></div>
-            <div className="scenario-row"><span className="sc-ic ok">●</span><div><div className="sc-nm">+ Aerator barge dispatched</div><div className="sc-sub">reach 5 lakes · ETA 38 min</div></div></div>
+            <div className={`scenario-row ${scenario === 'baseline' ? 'active' : ''}`} onClick={() => setScenario('baseline')}><span className="sc-ic">●</span><div><div className="sc-nm">Baseline drift</div><div className="sc-sub">no intervention · reach 8 lakes / 12h</div></div></div>
+            <div className={`scenario-row ${scenario === 'active' ? 'active' : ''}`} onClick={() => setScenario('active')}><span className="sc-ic crit">●</span><div><div className="sc-nm">Active simulation</div><div className="sc-sub">chemical spill · Bellandur S-04</div></div></div>
+            <div className={`scenario-row ${scenario === 'mitigated' ? 'active' : ''}`} onClick={() => setScenario('mitigated')}><span className="sc-ic ok">●</span><div><div className="sc-nm">+ Aerator barge dispatched</div><div className="sc-sub">reach 5 lakes · ETA 38 min</div></div></div>
 
             <div className="spread-section-head" style={{ marginTop: 12 }}>Time to impact · 12h</div>
             <div className="impact-row crit"><span className="ir-lake">Hussain Sagar</span><span className="ir-bar"><span className="ir-fill" style={{ width: '82%' }} /></span><span className="ir-time">1h 48m</span></div>
@@ -157,14 +175,7 @@ export default function Map() {
           </div>
         </aside>
 
-        <div className="map-controls">
-          <button className="map-ctrl">+</button>
-          <button className="map-ctrl">−</button>
-          <button className="map-ctrl">⌖</button>
-          <button className="map-ctrl">▤</button>
-        </div>
-
-        <div className="map-legend">
+        <div className="map-legend" style={{ zIndex: 1000, bottom: 44 }}>
           <div className="legend-item"><span className="legend-pip" style={{ background: 'var(--secondary)' }} />Healthy</div>
           <div className="legend-item"><span className="legend-pip" style={{ background: '#facc15' }} />Moderate</div>
           <div className="legend-item"><span className="legend-pip" style={{ background: 'var(--tertiary-container)' }} />At Risk</div>
@@ -172,9 +183,9 @@ export default function Map() {
           <div className="legend-item"><span className="legend-pip" style={{ background: 'var(--outline)' }} />Offline</div>
         </div>
 
-        <div className="map-stats">
+        <div className="map-stats" style={{ zIndex: 1000, bottom: 44 }}>
           <span>VISIBLE · {lakesList.length}</span><span>·</span>
-          <span>ZOOM 6.2</span><span>·</span>
+          <span>LIVE MAP</span><span>·</span>
           <span style={{ color: 'var(--surface-tint)' }}>WGS-84</span>
         </div>
       </div>

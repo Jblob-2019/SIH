@@ -39,6 +39,19 @@ function slaLeft(iso) {
 export default function Incidents() {
   const incidents = useApi(api.incidents);
   const [selectedId, setSelectedId] = useState(null);
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [addTitle, setAddTitle] = useState('');
+  const [addLake, setAddLake] = useState('Powai Lake');
+  const [addSeverity, setAddSeverity] = useState('warn');
+
+  const handleAdd = async () => {
+    if (!addTitle) return;
+    await api.createIncident({ title: addTitle, lake: addLake, severity: addSeverity });
+    setShowAdd(false);
+    setAddTitle('');
+    incidents.refetch();
+  };
 
   const list = useMemo(() => (incidents.data && incidents.data.incidents) || [], [incidents.data]);
   const counts = useMemo(() => {
@@ -53,7 +66,7 @@ export default function Incidents() {
     <div className="view active">
       <div className="section-h">
         <div><h1>Incidents</h1><div className="sub">{counts.open} open · {counts.crit} critical · avg resolution 4h 12m</div></div>
-        <div className="actions"><button className="btn">Assign Team</button><button className="btn pri">+ Report Incident</button></div>
+        <div className="actions"><button className="btn">Assign Team</button><button className="btn pri" onClick={() => setShowAdd(true)}>+ Report Incident</button></div>
       </div>
       <div className="two-col">
         <div>
@@ -108,6 +121,39 @@ export default function Incidents() {
           </div>
         </div>
       </div>
+      
+      {showAdd && (
+        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div className="card glass" style={{ width: 400, padding: 20 }}>
+            <h3 style={{ marginBottom: 15 }}>Report Incident</h3>
+            <label className="form-row" style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+              <span className="form-l">Lake</span>
+              <select value={addLake} onChange={e => setAddLake(e.target.value)} style={{ padding: 8, borderRadius: 'var(--r)', background: 'var(--surface-container)', color: 'var(--on-surface)', border: '1px solid var(--outline)' }}>
+                <option>Powai Lake</option>
+                <option>Dal Lake</option>
+                <option>Sukhna Lake</option>
+                <option>Loktak Lake</option>
+              </select>
+            </label>
+            <label className="form-row" style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+              <span className="form-l">Title</span>
+              <input value={addTitle} onChange={e => setAddTitle(e.target.value)} placeholder="E.g. Foam detected" style={{ padding: 8, borderRadius: 'var(--r)', background: 'var(--surface-container)', color: 'var(--on-surface)', border: '1px solid var(--outline)' }} />
+            </label>
+            <label className="form-row" style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 20 }}>
+              <span className="form-l">Severity</span>
+              <select value={addSeverity} onChange={e => setAddSeverity(e.target.value)} style={{ padding: 8, borderRadius: 'var(--r)', background: 'var(--surface-container)', color: 'var(--on-surface)', border: '1px solid var(--outline)' }}>
+                <option value="info">Info</option>
+                <option value="warn">High</option>
+                <option value="crit">Critical</option>
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
+              <button className="btn pri" onClick={handleAdd}>Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

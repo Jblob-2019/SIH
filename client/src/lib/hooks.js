@@ -6,6 +6,10 @@ import { useEffect, useState } from 'react';
  */
 export function useApi(fn, deps = []) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
+  const [tick, setTick] = useState(0);
+
+  const refetch = () => setTick(t => t + 1);
+
   useEffect(() => {
     let live = true;
     setState(s => ({ ...s, loading: true }));
@@ -15,8 +19,9 @@ export function useApi(fn, deps = []) {
       .catch(error => live && setState({ data: null, error, loading: false }));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return state;
+  }, [...deps, tick]);
+
+  return { ...state, refetch };
 }
 
 /** Random-but-stable ID for DOM keys. */

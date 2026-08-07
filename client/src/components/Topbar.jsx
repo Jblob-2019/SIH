@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 
 export default function Topbar({ active }) {
   const [clock, setClock] = useState(new Date());
+  const [showNotif, setShowNotif] = useState(false);
+  
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
@@ -32,8 +34,14 @@ export default function Topbar({ active }) {
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
           <span className="dot" />
         </button>
-        <button className="iconbtn" title="Notifications">
+        <button className="iconbtn" title="Notifications" onClick={() => setShowNotif(!showNotif)}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+          {showNotif && (
+            <div style={{ position: 'absolute', top: 44, right: -10, width: 250, background: 'var(--surface-container-high)', border: '1px solid var(--outline-variant)', borderRadius: 'var(--r-lg)', padding: 14, textAlign: 'left', zIndex: 100, boxShadow: 'var(--shadow-hud)', cursor: 'default' }} onClick={e => e.stopPropagation()}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', color: 'var(--on-surface)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: "'JetBrains Mono', monospace" }}>Notifications</h4>
+              <div style={{ fontSize: '12px', color: 'var(--on-surface-variant)' }}>No new notifications at this time.</div>
+            </div>
+          )}
         </button>
         <span className="divline" />
         <div style={{ textAlign: 'right' }}>

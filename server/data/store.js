@@ -4,6 +4,10 @@
  * (Postgres / Mongo / etc.) by re-implementing this module's interface.
  */
 const { nanoid } = require('nanoid');
+const fs = require('fs');
+const path = require('path');
+
+const STORE_FILE = path.join(__dirname, 'store.json');
 
 const nowISO = () => new Date().toISOString();
 const isoDate = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toISOString().slice(0, 10);
@@ -118,6 +122,42 @@ const METRICS = () => ({
   ts:            nowISO()
 });
 
+let _state = {
+  LAKES, SENSORS, INCIDENTS, ANOMALIES, FORECASTS,
+  BIODIVERSITY, MAINTENANCE, OPTIMIZE, RECOVERY, EMERGENCY, REPORTS, CITIZEN
+};
+
+// Load from disk if available
+try {
+  if (fs.existsSync(STORE_FILE)) {
+    _state = JSON.parse(fs.readFileSync(STORE_FILE, 'utf-8'));
+    // Update local references
+    LAKES.splice(0, LAKES.length, ..._state.LAKES);
+    SENSORS.splice(0, SENSORS.length, ..._state.SENSORS);
+    INCIDENTS.splice(0, INCIDENTS.length, ..._state.INCIDENTS);
+    ANOMALIES.splice(0, ANOMALIES.length, ..._state.ANOMALIES);
+    FORECASTS.splice(0, FORECASTS.length, ..._state.FORECASTS);
+    BIODIVERSITY.splice(0, BIODIVERSITY.length, ..._state.BIODIVERSITY);
+    MAINTENANCE.splice(0, MAINTENANCE.length, ..._state.MAINTENANCE);
+    OPTIMIZE.splice(0, OPTIMIZE.length, ..._state.OPTIMIZE);
+    RECOVERY.splice(0, RECOVERY.length, ..._state.RECOVERY);
+    EMERGENCY.splice(0, EMERGENCY.length, ..._state.EMERGENCY);
+    REPORTS.splice(0, REPORTS.length, ..._state.REPORTS);
+    CITIZEN.splice(0, CITIZEN.length, ..._state.CITIZEN);
+  }
+} catch (e) {
+  console.error("Failed to load store.json", e);
+}
+
+const saveStore = () => {
+  try {
+    fs.writeFileSync(STORE_FILE, JSON.stringify(_state, null, 2), 'utf-8');
+  } catch (e) {
+    console.error("Failed to save store.json", e);
+  }
+};
+
+
 // ---------- async accessors (mirror async DB calls) ----------
 const sleep = (ms = 0) => new Promise(r => setTimeout(r, ms));
 const all = (xs, ms = 5) => Promise.resolve(sleep(ms)).then(() => xs);
@@ -154,12 +194,14 @@ module.exports = {
       openedAt: nowISO()
     };
     INCIDENTS.unshift(inc);
+    saveStore();
     return all(inc);
   },
   patchIncident: (id, body) => {
     const inc = INCIDENTS.find(x => x.id === id);
     if (!inc) return Promise.reject({ status: 404, message: 'Incident not found' });
     Object.assign(inc, body || {});
+    saveStore();
     return all(inc);
   },
   // other
@@ -174,8 +216,20 @@ module.exports = {
   citizen:      () => all(CITIZEN),
   assistant:    body => {
     const prompt = (body && body.prompt || '').trim();
+    const lc = prompt.toLowerCase();
+    
+    let reply = `Acknowledged: "${prompt}". Placeholder assistant — connect your LLM endpoint here.`;
+    if (lc.includes('sensor') || lc.includes('readings')) {
+      reply = "Currently, there are 24 sensors active across 8 lakes. 5 are experiencing connectivity issues.";
+    } else if (lc.includes('incident')) {
+      const open = INCIDENTS.filter(i => i.status !== 'closed').length;
+      reply = `There are currently ${open} open incidents requiring attention. The most severe is at Powai Lake.`;
+    } else if (lc.includes('turbidity')) {
+      reply = "Turbidity levels have spiked at Bellandur Lake. Predictive models suggest a spread to adjacent regions within 12 hours if unmitigated.";
+    }
+
     return all({
-      reply: `Acknowledged: "${prompt}". Placeholder assistant — connect your LLM endpoint here.`,
+      reply,
       suggestions: [
         'Show latest sensor readings',
         'Summarize open incidents',

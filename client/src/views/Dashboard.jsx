@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { api } from '../lib/api.js';
-import { useApi } from '../lib/hooks.js';
+import { useApi, wqiOf, statusLabel, forecastWqi, toPolyline } from '../lib/hooks.js';
 
 /* Dashboard view — ported verbatim from the original HTML template
    (KPIs with sparklines, WQI chart, health donut, critical-lakes table,
@@ -10,6 +10,7 @@ export default function Dashboard() {
   const metrics    = useApi(api.metrics);
   const forecasts  = useApi(api.forecasts);
   const incidents  = useApi(api.incidents);
+  const lakes      = useApi(api.lakes);
 
   const m = metrics.data;
   const fc = forecasts.data && forecasts.data.forecasts;
@@ -18,16 +19,27 @@ export default function Dashboard() {
   // Build a smooth 14-day WQI-like sparkline from forecast data
   const wqiSeries = useMemo(() => {
     if (!fc || fc.length === 0) return '';
-    return fc.map((d, i) => {
-      const x = i * (560 / (fc.length - 1)) + 20;
-      // pseudo-WQI: combine DO, pH, inverse turbidity
-      const wqi = (d.do_mgL * 8) + (d.ph * 6) - (d.turbidity_ntu * 0.6);
-      const y = 200 - Math.max(20, Math.min(180, wqi * 7));
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
+    return toPolyline(fc.map(forecastWqi), { width: 560, x0: 20 }).points;
   }, [fc]);
 
-  const openIncidents = inc.filter(i => i.status !== 'closed').slice(0, 7);
+  const lakeList = (lakes.data && lakes.data.lakes) || [];
+  const health = useMemo(() => {
+    const c = { ok: 0, warn: 0, crit: 0 };
+    lakeList.forEach(l => { c[l.status] = (c[l.status] || 0) + 1; });
+    return c;
+  }, [lakeList]);
+  const criticalLakes = useMemo(() => [...lakeList]
+    .filter(l => l.status !== 'ok')
+    .sort((a, b) => wqiOf(a) - wqiOf(b))
+    .slice(0, 5), [lakeList]);
+  const totalLakes = lakeList.length || (m ? m.totalLakes : 0);
+  // donut arcs (circumference 2πr = 440 for r=70)
+  const arc = n => (totalLakes ? (n / totalLakes) * 440 : 0);
+
+  const allOpen = inc
+    .filter(i => !['closed', 'resolved'].includes(String(i.status).toLowerCase()))
+    .sort((a, b) => new Date(b.openedAt) - new Date(a.openedAt));
+  const openIncidents = allOpen.slice(0, 7);
   const offlineCount = m ? (m.sensorsTotal - m.sensorsOnline) : 17;
   const eco = m ? m.ecoIndex : 78.4;
   const compliance = m ? m.compliancePct : 94.1;
@@ -37,7 +49,7 @@ export default function Dashboard() {
       <div className="section-h">
         <div>
           <h1>Operations Overview</h1>
-          <div className="sub">Real-time telemetry across 412 monitored water bodies · last sync 2s ago</div>
+          <div className="sub">Real-time telemetry across {totalLakes} monitored water bodies{m && m.dataSource === 'offline' ? ' · offline data (database unreachable)' : ''}</div>
         </div>
         <div className="actions">
           <button className="btn ghost">Last 24h ▾</button>
@@ -59,7 +71,7 @@ export default function Dashboard() {
         <div className="kpi">
           <div className="pip" />
           <div className="label">Healthy Lakes</div>
-          <div className="val">{m ? Math.round(m.totalLakes * 0.76) : 312}</div>
+          <div className="val">{health.ok}</div>
           <div className="delta up">▲ +4</div>
           <svg className="spark" viewBox="0 0 200 40" preserveAspectRatio="none">
             <polyline fill="none" stroke="#89ceff" strokeWidth="1.6" points="0,30 30,28 60,24 90,22 120,18 150,16 180,14 200,12" />
@@ -68,7 +80,7 @@ export default function Dashboard() {
         <div className="kpi warn">
           <div className="pip warn" />
           <div className="label">Moderate / At Risk</div>
-          <div className="val">{m ? Math.round(m.totalLakes * 0.18) : 84}</div>
+          <div className="val">{health.warn}</div>
           <div className="delta down">▼ -2</div>
           <svg className="spark" viewBox="0 0 200 40" preserveAspectRatio="none">
             <polyline fill="none" stroke="#ffb690" strokeWidth="1.6" points="0,12 30,14 60,18 90,16 120,22 150,20 180,24 200,22" />
@@ -77,7 +89,7 @@ export default function Dashboard() {
         <div className="kpi crit">
           <div className="pip crit" />
           <div className="label">Critical Lakes</div>
-          <div className="val">{m ? Math.round(m.totalLakes * 0.06) : 16}</div>
+          <div className="val">{health.crit}</div>
           <div className="delta down">▲ +3 (24h)</div>
           <svg className="spark" viewBox="0 0 200 40" preserveAspectRatio="none">
             <polyline fill="none" stroke="#ffb4ab" strokeWidth="1.6" points="0,32 30,30 60,28 90,22 120,24 150,18 180,12 200,8" />
@@ -123,7 +135,7 @@ export default function Dashboard() {
 
       <div className="chart-grid">
         <div className="card glass">
-          <div className="card-h"><h3>Water Quality Index — National Trend · 14d</h3><div className="right">Δ vs prev 14d +2.8</div></div>
+          <div className="card-h"><h3>Water Quality Index — Forecast Trend</h3><div className="right">{fc && fc.length ? `${fc.length}d · WQI ${forecastWqi(fc[0]).toFixed(1)} → ${forecastWqi(fc[fc.length - 1]).toFixed(1)}` : ''}</div></div>
           <div className="chart-host">
             <svg viewBox="0 0 600 220" preserveAspectRatio="none" width="100%" height="100%">
               <defs>
@@ -138,13 +150,12 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="card glass">
-          <div className="card-h"><h3>Health Distribution</h3><div className="right">412 lakes</div></div>
+          <div className="card-h"><h3>Health Distribution</h3><div className="right">{totalLakes} lakes</div></div>
           <div className="chart-host" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg viewBox="0 0 200 200" width="180" height="180">
-              <circle cx="100" cy="100" r="70" stroke="#4edea3" strokeWidth="20" fill="none" strokeDasharray="335 440" transform="rotate(-90 100 100)" />
-              <circle cx="100" cy="100" r="70" stroke="#facc15" strokeWidth="20" fill="none" strokeDasharray="45 440" strokeDashoffset="-335" transform="rotate(-90 100 100)" />
-              <circle cx="100" cy="100" r="70" stroke="#ffb690" strokeWidth="20" fill="none" strokeDasharray="35 440" strokeDashoffset="-380" transform="rotate(-90 100 100)" />
-              <circle cx="100" cy="100" r="70" stroke="#ffb4ab" strokeWidth="20" fill="none" strokeDasharray="25 440" strokeDashoffset="-415" transform="rotate(-90 100 100)" />
+              <circle cx="100" cy="100" r="70" stroke="#4edea3" strokeWidth="20" fill="none" strokeDasharray={`${arc(health.ok)} 440`} transform="rotate(-90 100 100)" />
+              <circle cx="100" cy="100" r="70" stroke="#ffb690" strokeWidth="20" fill="none" strokeDasharray={`${arc(health.warn)} 440`} strokeDashoffset={-arc(health.ok)} transform="rotate(-90 100 100)" />
+              <circle cx="100" cy="100" r="70" stroke="#ffb4ab" strokeWidth="20" fill="none" strokeDasharray={`${arc(health.crit)} 440`} strokeDashoffset={-arc(health.ok + health.warn)} transform="rotate(-90 100 100)" />
               <text x="100" y="96" textAnchor="middle" fill="#dbe2fd" font="700 28px Geist, sans-serif">{eco.toFixed(1)}</text>
               <text x="100" y="118" textAnchor="middle" fill="#8a9299" font="500 10px JetBrains Mono, monospace">/ 100</text>
             </svg>
@@ -157,21 +168,28 @@ export default function Dashboard() {
           <div className="card-h"><h3>Critical Lakes · Top 5</h3><a href="#lakes" className="right" style={{ color: 'var(--surface-tint)' }}>View all →</a></div>
           <div className="tbl-wrap" style={{ border: 0, background: 'transparent' }}>
             <table className="tbl">
-              <thead><tr><th>Lake</th><th>Region</th><th>WQI</th><th>Status</th><th>Trend</th></tr></thead>
+              <thead><tr><th>Lake</th><th>District</th><th>WQI</th><th>Status</th><th>Readings</th></tr></thead>
               <tbody>
-                <tr><td className="label">Bellandur</td><td>Karnataka</td><td className="num">28.4</td><td><span className="pill crit"><span className="pip" />Critical</span></td><td className="num" style={{ color: 'var(--error)' }}>▼ -8.1</td></tr>
-                <tr><td className="label">Nakki</td><td>Rajasthan</td><td className="num">31.7</td><td><span className="pill crit"><span className="pip" />Critical</span></td><td className="num" style={{ color: 'var(--error)' }}>▼ -4.2</td></tr>
-                <tr><td className="label">Surajkund</td><td>Haryana</td><td className="num">34.2</td><td><span className="pill crit"><span className="pip" />Critical</span></td><td className="num" style={{ color: 'var(--error)' }}>▼ -2.0</td></tr>
-                <tr><td className="label">Hussain Sagar</td><td>Telangana</td><td className="num">36.8</td><td><span className="pill crit"><span className="pip" />Critical</span></td><td className="num" style={{ color: 'var(--error)' }}>▼ -1.4</td></tr>
-                <tr><td className="label">Upper Lake (Bhojtal)</td><td>Madhya Pradesh</td><td className="num">38.1</td><td><span className="pill crit"><span className="pip" />Critical</span></td><td className="num" style={{ color: 'var(--error)' }}>▼ -0.9</td></tr>
+                {criticalLakes.length === 0 && (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', padding: 16 }}>{lakes.loading ? 'Loading…' : 'No lakes at risk.'}</td></tr>
+                )}
+                {criticalLakes.map(l => (
+                  <tr key={l.id}>
+                    <td className="label">{l.name}</td>
+                    <td>{l.city}</td>
+                    <td className="num">{wqiOf(l).toFixed(1)}</td>
+                    <td><span className={'pill ' + l.status}><span className="pip" />{statusLabel(l.status)}</span></td>
+                    <td className="num" style={{ color: 'var(--error)' }}>DO {l.dissolved_oxygen ?? '—'} · pH {l.ph ?? '—'}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
         <div className="card glass">
-          <div className="card-h"><h3>Active Incidents</h3><div className="right">{openIncidents.length} open</div></div>
+          <div className="card-h"><h3>Active Incidents</h3><div className="right">{allOpen.length} open</div></div>
           <div className="timeline">
-            {openIncidents.length === 0 && (
+            {openIncidents.length === 0 && !incidents.data && (
               <>
                 <div className="tl-item crit"><div className="t">Bellandur — Foam overflow</div><div className="m">14:21 · BLR-EAST-04 · 3 sensors fault</div></div>
                 <div className="tl-item warn"><div className="t">Nakki — Algal bloom detected</div><div className="m">13:58 · satellite + spectral</div></div>
@@ -182,7 +200,7 @@ export default function Dashboard() {
             {openIncidents.map(i => (
               <div className={'tl-item ' + (i.severity === 'crit' ? 'crit' : i.severity === 'warn' ? 'warn' : '')} key={i.id}>
                 <div className="t">{i.lake} — {i.title}</div>
-                <div className="m">live · {i.status} · {i.id}</div>
+                <div className="m">{new Date(i.openedAt).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · {i.status} · {i.id}</div>
               </div>
             ))}
           </div>

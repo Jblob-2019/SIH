@@ -24,13 +24,13 @@ router.get('/', (_req, res) => res.json({
 }));
 
 // alias /health under /api for the Vite proxy path
-router.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
-
-// inline route handlers — all hit the live Supabase store
+// inline route handlers — all hit the live Supabase store (offline fallback if unreachable)
 const S = require('../supabaseStore');
 
+router.get('/health', (_req, res) => res.json({ ok: true, dataSource: S.dataSource(), ts: new Date().toISOString() }));
+
 // metrics
-router.get('/metrics', wrap(async (_req, res) => res.json(await S.metrics())));
+router.get('/metrics', wrap(async (_req, res) => { const m = await S.metrics(); res.json({ ...m, dataSource: S.dataSource() }); }));
 
 // lakes
 router.get('/lakes',          wrap(async (_req, res) => res.json({ lakes: await S.lakes() })));
@@ -61,5 +61,8 @@ router.get('/citizen',        wrap(async (_req, res) => res.json({ tickets: awai
 // assistant
 router.get('/assistant/models', wrap(async (_req, res) => res.json(await S.getOllamaModels())));
 router.post('/assistant', wrap(async (req, res) => res.json(await S.assistant(req.body || {}))));
+
+// unknown /api paths → JSON 404 (instead of falling through to the SPA)
+router.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 module.exports = router;

@@ -17,24 +17,46 @@ export default function Anomalies() {
   const a = useApi(api.anomalies);
   const live = (a.data && a.data.anomalies) || [];
 
+  // Map live threshold breaches (pH outside 6.5–8.5, DO < 5 mg/L) onto table rows.
+  // Seed rows are only shown if the endpoint errors, so an empty live list reads as "all clear".
   const rows = useMemo(() => {
-    if (live.length > 0) return live.map((x, i) => {
-      const seed = seedRows[i % seedRows.length];
-      return { ...seed, id: x.id };
+    if (a.error) return seedRows.map((s, i) => ({ ...s, id: `a-${i}` }));
+    return live.map(x => {
+      const isPh = x.type === 'pH';
+      const v = Number(x.deviation);
+      const expected = isPh ? '6.5 – 8.5' : '≥ 5.0 mg/L';
+      // distance past the threshold, expressed relative to a nominal spread
+      const delta = isPh ? (v < 6.5 ? v - 6.5 : v - 8.5) / 0.3 : (v - 5) / 0.8;
+      const sev = isPh ? (v < 6.0 || v > 9.0 ? 'crit' : 'warn') : (v < 4 ? 'crit' : 'warn');
+      return {
+        id: x.id,
+        t: x.detectedAt ? new Date(x.detectedAt).toLocaleTimeString() : '—',
+        l: x.lakeName || x.sensorId,
+        p: isPh ? 'pH' : 'DO',
+        r: isPh ? v.toFixed(2) : `${v.toFixed(2)} mg/L`,
+        e: expected,
+        d: `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}σ`,
+        dc: sev === 'crit' ? 'var(--error)' : 'var(--tertiary-container)',
+        c: Math.min(99.9, 80 + Math.abs(delta) * 4).toFixed(1),
+        type: isPh ? (v < 6.5 ? 'Acidic' : 'Alkaline') : 'Hypoxia',
+        cls: sev
+      };
     });
-    return seedRows.map((s, i) => ({ ...s, id: `a-${i}` }));
-  }, [live]);
+  }, [live, a.error]);
 
   return (
     <div className="view active">
       <div className="section-h">
-        <div><h1>Anomaly Detection</h1><div className="sub">{rows.length} active anomalies · auto-flagged by ML models · 96% precision</div></div>
+        <div><h1>Anomaly Detection</h1><div className="sub">{rows.length} active anomalies · threshold breaches from latest readings · pH 6.5–8.5 · DO ≥ 5 mg/L</div></div>
         <div className="actions"><button className="btn">Tune thresholds</button><button className="btn pri">Mark all reviewed</button></div>
       </div>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead><tr><th>Time</th><th>Lake</th><th>Parameter</th><th>Reading</th><th>Expected</th><th>Δ σ</th><th>Confidence</th><th>Type</th><th></th></tr></thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20 }}>{a.loading ? 'Loading…' : 'No threshold breaches in the latest readings.'}</td></tr>
+            )}
             {rows.map(r => (
               <tr key={r.id}>
                 <td className="num">{r.t}</td>
@@ -45,7 +67,7 @@ export default function Anomalies() {
                 <td className="num" style={{ color: r.dc }}>{r.d}</td>
                 <td className="num">{r.c}%</td>
                 <td><span className={`pill ${r.cls}`}><span className="pip" />{r.type}</span></td>
-                <td><button className="iconbtn">→</button></td>
+                <td><a className="iconbtn" href="#map" title="Show on map">→</a></td>
               </tr>
             ))}
           </tbody>

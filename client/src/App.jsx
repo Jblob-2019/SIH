@@ -45,12 +45,19 @@ const VIEWS = {
 };
 
 function getRoute() {
-  const h = (window.location.hash || '#dashboard').slice(1);
+  const h = (window.location.hash || '#dashboard').slice(1).split('?')[0];
   return VIEWS[h] ? h : 'dashboard';
 }
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  // mock auth: keep the signed-in user for the browser session so a refresh doesn't log out
+  const [user, setUserState] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('aquamind.user')) || null; } catch { return null; }
+  });
+  const setUser = u => {
+    try { u ? sessionStorage.setItem('aquamind.user', JSON.stringify(u)) : sessionStorage.removeItem('aquamind.user'); } catch { /* ignore */ }
+    setUserState(u);
+  };
   const [route, setRoute] = useState(getRoute());
   const [metrics, setMetrics] = useState(null);
   const [online, setOnline] = useState(false);

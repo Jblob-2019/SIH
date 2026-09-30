@@ -1,11 +1,14 @@
-const { supabase } = require('./db');
+const { supabase, configured } = require('./db');
+const { coordsFor } = require('../data/geo');
+const offline = require('../data/store');
 
 const nowISO = () => new Date().toISOString();
+const OLLAMA = process.env.OLLAMA_URL || 'http://localhost:11434';
 
 // Helper to gracefully handle supabase responses
 const extract = (res) => {
   if (res.error) {
-    console.error('Supabase query error:', res.error);
+    console.error('Supabase query error:', res.error.message || res.error);
     throw res.error;
   }
   return res.data;
@@ -20,56 +23,66 @@ const mapStatus = (statusStr) => {
   return 'ok';
 };
 
-const geoCache = {
-  "Chembarambakkam Lake": { "lat": 13.0081524, "lon": 80.055375, "area": 15.32 },
-  "Puzhal (Red Hills) Lake": { "lat": 13.1594, "lon": 80.1747, "area": 18.0 },
-  "Poondi Reservoir": { "lat": 13.2372, "lon": 79.8456, "area": 32.0 },
-  "Pulicat Lake": { "lat": 13.640242, "lon": 80.1671589, "area": 450.0 },
-  "Ooty Lake": { "lat": 11.4034171, "lon": 76.6916789, "area": 0.65 },
-  "Kodaikanal Lake": { "lat": 10.234003, "lon": 77.4865229, "area": 0.24 },
-  "Yercaud Lake": { "lat": 11.7832744, "lon": 78.2104687, "area": 0.11 },
-  "Singanallur Lake": { "lat": 10.9911946, "lon": 77.0233434, "area": 1.15 },
-  "Valankulam Lake": { "lat": 10.9922, "lon": 76.9744, "area": 0.65 },
-  "Bhavanisagar Reservoir (Lower Bhavani)": { "lat": 11.4705, "lon": 77.1264, "area": 87.0 },
-  "Mettur Dam Reservoir": { "lat": 11.8016, "lon": 77.8019, "area": 155.0 },
-  "Vaigai Dam Reservoir": { "lat": 10.0538, "lon": 77.5894, "area": 24.0 },
-  "Kaliveli Lake (Kazhuveli Wetland)": { "lat": 12.0620, "lon": 79.8252, "area": 74.0 },
-  "Vembannur Wetland Complex": { "lat": 8.1691, "lon": 77.3887, "area": 0.20 },
-  "Cauvery River (TN Stretch)": { "lat": 11.3503, "lon": 77.8344, "area": 50.0 },
-  "Vaigai River": { "lat": 9.8808298, "lon": 78.1864627, "area": 25.0 },
-  "Tamiraparani River": { "lat": 8.7183539, "lon": 77.5359567, "area": 15.0 },
-  "Noyyal River": { "lat": 11.1078792, "lon": 77.2994439, "area": 10.0 }
+// damage_control.severity <-> UI severity
+const toUiSeverity = sev => {
+  const s = (sev || '').toLowerCase();
+  if (s === 'high' || s === 'critical') return 'crit';
+  if (s === 'low') return 'info';
+  return 'warn';
+};
+const toDbSeverity = sev => sev === 'crit' ? 'High' : sev === 'info' ? 'Low' : 'Medium';
+
+const actionId = id => {
+  const n = Number(String(id).replace(/^ACT-/i, ''));
+  if (!Number.isInteger(n)) throw { status: 400, message: `Invalid incident id: ${id}` };
+  return n;
 };
 
-module.exports = {
+const toIncident = d => ({
+  id: `ACT-${d.action_id}`,
+  lake: d.water_bodies?.name || d.name || 'Unknown',
+  severity: toUiSeverity(d.severity),
+  title: d.issue_detected,
+  status: d.status,
+  team: d.team || undefined,
+  openedAt: d.detected_at || nowISO()
+});
+
+const INCIDENT_COLS = 'action_id, issue_detected, severity, status, detected_at, water_bodies(name)';
+
+// ---------- live (Supabase) implementations ----------
+const live = {
   // metrics
   metrics: async () => {
     // 1. Total Lakes
-    const { count: totalLakes } = await supabase.from('water_bodies').select('*', { count: 'exact', head: true });
-    
+    const lakesRes = await supabase.from('water_bodies').select('*', { count: 'exact', head: true });
+    extract(lakesRes);
+
     // 2. Open incidents (Damage control not resolved)
-    const { count: openIncidents } = await supabase.from('damage_control').select('*', { count: 'exact', head: true }).neq('status', 'Resolved');
+    const openRes = await supabase.from('damage_control').select('*', { count: 'exact', head: true }).neq('status', 'Resolved');
+    extract(openRes);
 
     // 3. Health scores
     const health = extract(await supabase.from('health_score').select('overall_score, status'));
-    
+
     let ecoIndex = 75.0;
     let compliancePct = 90.0;
-    
+
     if (health.length > 0) {
       ecoIndex = health.reduce((sum, h) => sum + (h.overall_score || 0), 0) / health.length;
       const goodCount = health.filter(h => h.status === 'Good').length;
       compliancePct = (goodCount / health.length) * 100;
     }
 
+    const total = lakesRes.count || 0;
     return {
-      totalLakes: totalLakes || 0,
-      sensorsOnline: (totalLakes || 0) * 3 - 2, // Mocking sensors based on lakes
-      sensorsTotal: (totalLakes || 0) * 3,
-      openIncidents: openIncidents || 0,
+      totalLakes: total,
+      sensorsOnline: total * 3 - 2, // Mocking sensors based on lakes
+      sensorsTotal: total * 3,
+      openIncidents: openRes.count || 0,
       ecoIndex,
       compliancePct,
-      alertsToday: openIncidents || 0,
+      alertsToday: openRes.count || 0,
       ts: nowISO()
     };
   },
@@ -77,36 +90,28 @@ module.exports = {
   // lakes
   lakes: async () => {
     const data = extract(await supabase.from('vw_latest_water_quality').select('*'));
-    
+
     // Also fetch health status to map to crit/warn/ok
     const health = extract(await supabase.from('health_score').select('water_body_id, status'));
     const healthMap = {};
     health.forEach(h => healthMap[h.water_body_id] = h.status);
 
     return data.map(d => {
-      let coords = geoCache[d.name] || { lat: 11.1271, lon: 78.6569 };
-      let lat = coords.lat;
-      let lon = coords.lon;
-
-      // Prevent perfect stacking of pins for lakes that fall back to the generic TN coordinate
-      if (lat === 11.1271 && lon === 78.6569) {
-        lat += (d.water_body_id * 0.08) - 0.5;
-        lon += ((d.water_body_id % 7) * 0.08) - 0.25;
-      }
+      const { lat, lon, area } = coordsFor(d.name, d.water_body_id);
 
       // Use turbidity for continuous color gradient. If null, derive a pseudo-random value from ID. 0 (good) to 50 (bad)
-      let metricValue = d.turbidity !== null ? d.turbidity : (d.water_body_id * 7 % 50);
+      const metricValue = d.turbidity != null ? d.turbidity : (d.water_body_id * 7 % 50);
 
       return {
         id: d.water_body_id,
         name: d.name,
         city: d.district_name || 'Unknown',
         state: 'TN', // Seed data is TN
-        area_km2: coords.area || 10.0,
+        area_km2: area,
         status: mapStatus(healthMap[d.water_body_id]),
-        metricValue: metricValue,
-        lat: lat,
-        lon: lon,
+        metricValue,
+        lat,
+        lon,
         ph: d.ph,
         dissolved_oxygen: d.dissolved_oxygen,
         turbidity: d.turbidity,
@@ -115,24 +120,19 @@ module.exports = {
       };
     });
   },
-  
+
   lake: async (id) => {
-    return { lake: { id }, sensors: [] }; // Stub for individual lake view
+    const lake = (await live.lakes()).find(l => String(l.id) === String(id));
+    if (!lake) throw { status: 404, message: 'Lake not found' };
+    const sensors = (await live.sensors()).filter(s => s.lakeId === lake.id);
+    return { lake, sensors };
   },
 
   // sensors
   sensors: async () => {
     const data = extract(await supabase.from('vw_latest_water_quality').select('*'));
     return data.map(d => {
-      let coords = geoCache[d.name] || { lat: 11.1271, lon: 78.6569 };
-      let lat = coords.lat;
-      let lon = coords.lon;
-
-      if (lat === 11.1271 && lon === 78.6569) {
-        lat += (d.water_body_id * 0.08) - 0.5;
-        lon += ((d.water_body_id % 7) * 0.08) - 0.25;
-      }
-      
+      const { lat, lon } = coordsFor(d.name, d.water_body_id);
       return {
         id: `SN-${d.water_body_id}`,
         lakeId: d.water_body_id,
@@ -142,12 +142,16 @@ module.exports = {
         signal: 'good',
         status: d.do_status === 'Critical' ? 'crit' : 'ok',
         lastReading: d.recorded_at,
-        lat: lat,
-        lon: lon
+        lat,
+        lon
       };
     });
   },
-  sensor: async (id) => ({ id }),
+  sensor: async (id) => {
+    const s = (await live.sensors()).find(x => x.id === id);
+    if (!s) throw { status: 404, message: 'Sensor not found' };
+    return s;
+  },
   readings: async (id) => {
     const lakeId = id.replace('SN-', '');
     const data = extract(await supabase.from('live_water_parameters').select('*').eq('water_body_id', lakeId).order('recorded_at', { ascending: false }).limit(24));
@@ -158,29 +162,47 @@ module.exports = {
     };
   },
 
-  // incidents
+  // incidents — open actions from damage_control (same rows as vw_open_actions,
+  // but with the action_id primary key so incidents have stable IDs)
   incidents: async () => {
-    const data = extract(await supabase.from('vw_open_actions').select('*'));
-    return data.map(d => ({
-      id: `ACT-${Math.floor(Math.random()*1000)}`, // We need an ID for UI key
-      lake: d.name,
-      severity: d.severity?.toLowerCase() === 'high' ? 'crit' : 'warn',
-      title: d.issue_detected,
-      status: d.status,
-      openedAt: d.detected_at || nowISO()
-    }));
+    const data = extract(await supabase.from('damage_control').select(INCIDENT_COLS).neq('status', 'Resolved').order('detected_at', { ascending: false }));
+    return data.map(toIncident);
   },
-  
-  createIncident: async (body) => ({ id: 'new', ...body }),
-  patchIncident: async (id, body) => ({ id, ...body }),
+  incident: async (id) => {
+    const data = extract(await supabase.from('damage_control').select(INCIDENT_COLS).eq('action_id', actionId(id)).maybeSingle());
+    if (!data) throw { status: 404, message: 'Incident not found' };
+    return toIncident(data);
+  },
+  createIncident: async (body) => {
+    if (!body || !body.lake || !body.title) throw { status: 400, message: 'lake and title are required' };
+    const wb = extract(await supabase.from('water_bodies').select('water_body_id').eq('name', body.lake).maybeSingle());
+    if (!wb) throw { status: 400, message: `Unknown lake: ${body.lake}` };
+    const row = extract(await supabase.from('damage_control').insert({
+      water_body_id: wb.water_body_id,
+      issue_detected: body.title,
+      severity: toDbSeverity(body.severity),
+      status: 'Open',
+      detected_at: nowISO()
+    }).select(INCIDENT_COLS).single());
+    return toIncident(row);
+  },
+  patchIncident: async (id, body) => {
+    const patch = {};
+    if (body && body.status)   patch.status = body.status;
+    if (body && body.severity) patch.severity = toDbSeverity(body.severity);
+    if (body && body.title)    patch.issue_detected = body.title;
+    if (!Object.keys(patch).length) throw { status: 400, message: 'Nothing to update (status, severity or title)' };
+    const row = extract(await supabase.from('damage_control').update(patch).eq('action_id', actionId(id)).select(INCIDENT_COLS).maybeSingle());
+    if (!row) throw { status: 404, message: 'Incident not found' };
+    return toIncident(row);
+  },
 
   // forecasts
   forecasts: async () => {
     const data = extract(await supabase.from('prediction').select('*').order('predicted_for_date', { ascending: true }));
     // Just map the first available lake's predictions for the sparkline trend
     if (data.length === 0) return [];
-    
-    // Group by date or just take the first lake
+
     const lake1 = data.filter(d => d.water_body_id === data[0].water_body_id);
     return lake1.map(d => ({
       date: d.predicted_for_date,
@@ -196,8 +218,9 @@ module.exports = {
     const data = extract(await supabase.from('live_water_parameters').select('*, water_bodies(name)').order('recorded_at', { ascending: false }).limit(50));
     const anoms = [];
     data.forEach(d => {
-      if (d.ph < 6.5 || d.ph > 8.5) anoms.push({ id: `AN-${d.reading_id}-PH`, sensorId: `SN-${d.water_body_id}`, type: 'pH', deviation: d.ph, detectedAt: d.recorded_at });
-      if (d.dissolved_oxygen < 5) anoms.push({ id: `AN-${d.reading_id}-DO`, sensorId: `SN-${d.water_body_id}`, type: 'DO', deviation: d.dissolved_oxygen, detectedAt: d.recorded_at });
+      const base = { sensorId: `SN-${d.water_body_id}`, lakeName: d.water_bodies?.name || 'Unknown', detectedAt: d.recorded_at };
+      if (d.ph != null && (d.ph < 6.5 || d.ph > 8.5)) anoms.push({ id: `AN-${d.reading_id}-PH`, type: 'pH', deviation: d.ph, ...base });
+      if (d.dissolved_oxygen != null && d.dissolved_oxygen < 5) anoms.push({ id: `AN-${d.reading_id}-DO`, type: 'DO', deviation: d.dissolved_oxygen, ...base });
     });
     return anoms;
   },
@@ -206,6 +229,7 @@ module.exports = {
     return data.map(d => ({
       species: d.species_affected,
       count: d.estimated_count,
+      lake: d.water_bodies?.name || 'Unknown',
       trend: `at ${d.water_bodies?.name || 'Unknown'}`
     }));
   },
@@ -213,8 +237,8 @@ module.exports = {
   optimize: async () => [],
   recovery: async () => {
     const data = extract(await supabase.from('vw_revival_progress').select('*'));
-    return data.map(d => ({
-      id: `REV-${Math.floor(Math.random()*100)}`,
+    return data.map((d, i) => ({
+      id: `REV-${d.revival_id ?? i + 1}`,
       lake: d.name,
       stage: d.scheme_name,
       pct: d.progress_percent
@@ -230,79 +254,109 @@ module.exports = {
     }));
   },
   reports: async () => [],
-  citizen: async () => [],
-  
-  getOllamaModels: async () => {
-    try {
-      const res = await fetch('http://localhost:11434/api/tags');
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.models.map(m => m.name);
-    } catch (e) {
-      console.error('Failed to fetch Ollama models:', e);
-      return [];
-    }
-  },
+  citizen: async () => []
+};
 
-  assistant: async ({ prompt, model }) => {
-    if (!prompt) return { reply: 'Please provide a prompt.' };
-    const selectedModel = model || 'llama3';
+// ---------- offline fallback ----------
+// When Supabase can't be reached (DNS failure, project paused, no network,
+// missing credentials) every data call falls back to the synthetic TN store in
+// data/store.js. The outage is remembered for RETRY_MS so each request doesn't
+// pay the connection timeout again. Real DB errors (RLS, bad column…) still
+// propagate so they aren't masked.
+const RETRY_MS = 60000;
+let offlineUntil = configured ? 0 : Infinity;
 
-    // 1. Gather context from Supabase
-    let contextStr = '';
-    try {
-      const mets = await module.exports.metrics();
-      const lks = await module.exports.lakes();
-      const incs = await module.exports.incidents();
-      
-      contextStr = `Current System Status:
+const isNetworkError = e => /fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|aborted|timeout/i
+  .test(`${e && e.message} ${e && e.details}`);
+
+const withFallback = name => async (...args) => {
+  if (Date.now() < offlineUntil) return offline[name](...args);
+  try {
+    return await live[name](...args);
+  } catch (e) {
+    if (!isNetworkError(e)) throw e;
+    console.warn(`[store] Supabase unreachable (${name}) — serving offline data for ${RETRY_MS / 1000}s`);
+    offlineUntil = Date.now() + RETRY_MS;
+    return offline[name](...args);
+  }
+};
+
+const store = {};
+Object.keys(live).forEach(name => { store[name] = withFallback(name); });
+
+store.dataSource = () => (Date.now() < offlineUntil ? 'offline' : 'supabase');
+
+// ---------- assistant (Ollama) ----------
+store.getOllamaModels = async () => {
+  try {
+    const res = await fetch(`${OLLAMA}/api/tags`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.models.map(m => m.name);
+  } catch (e) {
+    console.error('Failed to fetch Ollama models:', e.message);
+    return [];
+  }
+};
+
+store.assistant = async ({ prompt, model }) => {
+  if (!prompt) return { reply: 'Please provide a prompt.' };
+  // default to the first installed model rather than assuming llama3 is pulled
+  const selectedModel = model || (await store.getOllamaModels())[0] || 'llama3';
+
+  // 1. Gather context from the DB (or offline store)
+  let contextStr = '';
+  try {
+    const [mets, lks, incs] = await Promise.all([store.metrics(), store.lakes(), store.incidents()]);
+
+    contextStr = `Current System Status:
 - Total Lakes: ${mets.totalLakes}
 - Open Incidents: ${mets.openIncidents}
 - Eco Index: ${mets.ecoIndex.toFixed(1)}%
 
 Lakes summary:
-${lks.map(l => `- ${l.name} (${l.city}): Status ${l.status}`).join('\n')}
+${lks.map(l => `- ${l.name} (${l.city}): Status ${l.status}, pH ${l.ph ?? 'n/a'}, DO ${l.dissolved_oxygen ?? 'n/a'} mg/L, turbidity ${l.turbidity ?? 'n/a'} NTU`).join('\n')}
 
 Recent Incidents:
 ${incs.map(i => `- [${i.severity.toUpperCase()}] ${i.lake}: ${i.title}`).join('\n')}
 `;
-    } catch (e) {
-      contextStr = 'Failed to retrieve live DB context.';
-    }
+  } catch (e) {
+    contextStr = 'Failed to retrieve live DB context.';
+  }
 
-    const systemPrompt = `You are the AquaMind HIC (Hydraulic Intelligence Command) AI Assistant. 
-You help operators manage water bodies, predict incidents, and analyze data. 
+  const systemPrompt = `You are the AquaMind HIC (Hydraulic Intelligence Command) AI Assistant.
+You help operators manage water bodies, predict incidents, and analyze data.
 Use the following live context from the database to answer the user's queries accurately:
 
 ${contextStr}
 
 Respond concisely and professionally in plain text or simple markdown.`;
 
-    try {
-      const res = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt }
-          ],
-          stream: false
-        })
-      });
+  try {
+    const res = await fetch(`${OLLAMA}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        stream: false
+      })
+    });
 
-      if (!res.ok) {
-        return { reply: `Ollama error: HTTP ${res.status}` };
-      }
-
-      const data = await res.json();
-      return { 
-        reply: data.message?.content || 'No response from AI.'
-      };
-    } catch (e) {
-      console.error('Ollama API error:', e);
-      return { reply: 'Failed to connect to local Ollama instance. Is it running on port 11434?' };
+    if (!res.ok) {
+      if (res.status === 404) return { reply: `Model "${selectedModel}" is not installed in Ollama. Run \`ollama pull ${selectedModel}\` or pick another model.` };
+      return { reply: `Ollama error: HTTP ${res.status}` };
     }
+
+    const data = await res.json();
+    return { reply: data.message?.content || 'No response from AI.', model: selectedModel };
+  } catch (e) {
+    console.error('Ollama API error:', e.message);
+    return { reply: 'Failed to connect to local Ollama instance. Is it running on port 11434?' };
   }
 };
+
+module.exports = store;

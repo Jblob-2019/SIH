@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
-import { useApi } from '../lib/hooks.js';
+import { useApi, wqiOf } from '../lib/hooks.js';
 import { MapContainer, TileLayer, CircleMarker, Tooltip, LayersControl, LayerGroup, FeatureGroup, ZoomControl, useMap, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -23,6 +23,41 @@ function getGradientColor(value) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+// Flies the map to the selected lake. Must live at module scope: defining it
+// inside Map() gives it a new identity every render, which remounts it and
+// re-fires flyTo on every tick (the map kept snapping back to the lake).
+function MapController({ center, zoom }) {
+  const map = useMap();
+  const lat = center && center[0];
+  const lon = center && center[1];
+  useEffect(() => {
+    if (lat != null) map.flyTo([lat, lon], zoom, { duration: 0.4 });
+  }, [lat, lon, zoom, map]);
+  return null;
+}
+
+// great-circle distance in metres
+function distanceM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+const SCENARIO_FACTOR = { baseline: 0.6, active: 1, mitigated: 0.35 };
+const SIM_MINUTES = 720; // T+12:00
+const TN_DENSITY_PER_KM2 = 555;
+
+// Spread model: plume front advances at a speed driven by turbidity (m/min),
+// starting from the water body's own footprint.
+function spreadModel(lake, scenario) {
+  const speed = ((lake.metricValue || 0) * 2 + 20) * (SCENARIO_FACTOR[scenario] || 1);
+  const baseR = Math.sqrt(lake.area_km2 || 1) * 500;
+  return { speed, baseR, radiusAt: t => baseR + speed * t };
+}
+
+const fmtDur = min => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, '0')}m`;
+
 /* Live GIS Map — converted to interactive Leaflet Map */
 export default function Map() {
   const lakes   = useApi(api.lakes);
@@ -36,16 +71,7 @@ export default function Map() {
   const [layersMenuOpen, setLayersMenuOpen] = useState(false);
   const [activeLayer, setActiveLayer] = useState('osm');
 
-  // Controller to handle flying to selected lake
-  function MapController({ center, zoom }) {
-    const map = useMap();
-    useEffect(() => {
-      if (center) {
-        map.flyTo(center, zoom, { duration: 0.4 });
-      }
-    }, [center, zoom, map]);
-    return null;
-  }
+  const [dispatchMsg, setDispatchMsg] = useState('');
 
   const lakesList   = (lakes.data   && lakes.data.lakes)     || [];
   const sensorList  = (sensors.data && sensors.data.sensors) || [];
@@ -68,6 +94,39 @@ export default function Map() {
     }, 1000);
     return () => clearInterval(id);
   }, [spreadOpen, paused, speed]);
+
+  const model = selectedLake ? spreadModel(selectedLake, scenario) : null;
+  const outerR = model && tPlus > 0 ? model.radiusAt(tPlus) : 0;
+  const affectedKm2 = outerR ? Math.PI * (outerR / 1000) ** 2 : 0;
+
+  // downstream lakes the plume reaches within the 12h window, nearest first
+  const impacts = useMemo(() => {
+    if (!selectedLake) return [];
+    const m = spreadModel(selectedLake, scenario);
+    return lakesList
+      .filter(l => l.id !== selectedLake.id)
+      .map(l => ({ lake: l, minutes: Math.max(0, (distanceM(selectedLake, l) - m.baseR) / m.speed) }))
+      .filter(x => x.minutes <= SIM_MINUTES)
+      .sort((a, b) => a.minutes - b.minutes)
+      .slice(0, 6);
+  }, [selectedLake, scenario, lakesList]);
+
+  useEffect(() => { setDispatchMsg(''); }, [selectedLake]);
+
+  const dispatchTeam = async () => {
+    if (!selectedLake) return;
+    setDispatchMsg('Dispatching…');
+    try {
+      const inc = await api.createIncident({
+        lake: selectedLake.name,
+        title: 'Field team dispatched from GIS map',
+        severity: selectedLake.status === 'crit' ? 'crit' : selectedLake.status === 'warn' ? 'warn' : 'info'
+      });
+      setDispatchMsg(`Dispatched · ${inc.id}`);
+    } catch (err) {
+      setDispatchMsg(`Failed: ${err.message}`);
+    }
+  };
 
   const tStr = `T+${String(Math.floor(tPlus / 60)).padStart(2, '0')}:${String(tPlus % 60).padStart(2, '0')}`;
 
@@ -176,7 +235,7 @@ export default function Map() {
               {/* Outer boundary of the spread */}
               <Circle 
                 center={[selectedLake.lat, selectedLake.lon]} 
-                radius={tPlus * (selectedLake.metricValue * 8 + 20) * Math.sqrt(selectedLake.area_km2 || 10)} 
+                radius={outerR}
                 pathOptions={{ 
                   color: scenario === 'mitigated' ? '#52c41a' : '#ff4d4f', 
                   fillColor: scenario === 'mitigated' ? '#52c41a' : '#ff4d4f', 
@@ -188,7 +247,7 @@ export default function Map() {
               {/* Core highly-polluted area */}
               <Circle 
                 center={[selectedLake.lat, selectedLake.lon]} 
-                radius={tPlus * (selectedLake.metricValue * 3 + 10) * Math.sqrt(selectedLake.area_km2 || 10)} 
+                radius={model.baseR + (outerR - model.baseR) * 0.4}
                 pathOptions={{ 
                   color: 'transparent', 
                   fillColor: scenario === 'mitigated' ? '#52c41a' : '#ff4d4f', 
@@ -209,16 +268,17 @@ export default function Map() {
                   {selectedLake.status === 'crit' ? 'CRITICAL' : selectedLake.status}
                 </span>
               </div>
-              <div className="stat-line"><span className="lbl">WQI</span><span className="v" style={{ color: selectedLake.status === 'crit' ? 'var(--error)' : 'inherit' }}>{100 - (selectedLake.metricValue || 20).toFixed(1)}</span></div>
+              <div className="stat-line"><span className="lbl">WQI</span><span className="v" style={{ color: selectedLake.status === 'crit' ? 'var(--error)' : 'inherit' }}>{wqiOf(selectedLake).toFixed(1)}</span></div>
               <div className="stat-line"><span className="lbl">pH</span><span className="v">{selectedLake.ph != null ? selectedLake.ph.toFixed(1) : 'N/A'}</span></div>
               <div className="stat-line"><span className="lbl">DO</span><span className="v">{selectedLake.dissolved_oxygen != null ? selectedLake.dissolved_oxygen.toFixed(1) + ' mg/L' : 'N/A'}</span></div>
               <div className="stat-line"><span className="lbl">Turbidity</span><span className="v">{selectedLake.turbidity != null ? selectedLake.turbidity.toFixed(1) + ' NTU' : 'N/A'}</span></div>
               <div className="stat-line"><span className="lbl">Water Level</span><span className="v">{selectedLake.water_level_m != null ? selectedLake.water_level_m.toFixed(1) + ' m' : 'N/A'}</span></div>
               <div className="stat-line"><span className="lbl">Last update</span><span className="v">{selectedLake.recorded_at ? new Date(selectedLake.recorded_at).toLocaleTimeString() : 'N/A'}</span></div>
               <div style={{ display: 'flex', gap: 5, marginTop: 8 }}>
-                <button className="btn pri" style={{ flex: 1, justifyContent: 'center' }}>Dispatch</button>
+                <button className="btn pri" style={{ flex: 1, justifyContent: 'center' }} onClick={dispatchTeam}>Dispatch</button>
                 <button className="btn"     style={{ flex: 1, justifyContent: 'center' }} onClick={() => setSelectedLake(null)}>Close</button>
               </div>
+              {dispatchMsg && <div style={{ marginTop: 6, fontSize: 12, color: dispatchMsg.startsWith('Failed') ? 'var(--error)' : 'var(--secondary)' }}>{dispatchMsg}</div>}
             </div>
           </div>
         )}
@@ -232,7 +292,7 @@ export default function Map() {
             </div>
             <div className="spread-row" style={{ marginBottom: 8 }}>
               <span className="spread-eyebrow">Predictive · βeta</span>
-              <span className="spread-meta" id="spreadMeta">{selectedLake ? `${selectedLake.name} · ${(selectedLake.metricValue * 18).toFixed(0)} L/min` : 'Please select a lake on the map'}</span>
+              <span className="spread-meta" id="spreadMeta">{selectedLake ? `${selectedLake.name} · front ${model.speed.toFixed(0)} m/min` : 'Please select a lake on the map'}</span>
             </div>
             <div className="spread-controls">
               <button className="iconbtn small" id="spreadSpeedDown" onClick={() => setSpeed(s => Math.max(0.25, s / 2))} aria-label="Slow simulation">−</button>
@@ -253,18 +313,25 @@ export default function Map() {
             <div className={`scenario-row ${scenario === 'mitigated' ? 'active' : ''}`} onClick={() => setScenario('mitigated')}><span className="sc-ic ok">●</span><div><div className="sc-nm">+ Aerator barge dispatched</div><div className="sc-sub">neutralizing agents deployed</div></div></div>
 
             <div className="spread-section-head" style={{ marginTop: 12 }}>Time to impact · 12h</div>
-            <div className="impact-row crit"><span className="ir-lake">Hussain Sagar</span><span className="ir-bar"><span className="ir-fill" style={{ width: '82%' }} /></span><span className="ir-time">1h 48m</span></div>
-            <div className="impact-row crit"><span className="ir-lake">Surajkund</span><span className="ir-bar"><span className="ir-fill" style={{ width: '64%' }} /></span><span className="ir-time">2h 22m</span></div>
-            <div className="impact-row warn"><span className="ir-lake">Vembanad N</span><span className="ir-bar"><span className="ir-fill warn" style={{ width: '48%' }} /></span><span className="ir-time">5h 04m</span></div>
-            <div className="impact-row warn"><span className="ir-lake">Chilika</span><span className="ir-bar"><span className="ir-fill warn" style={{ width: '34%' }} /></span><span className="ir-time">7h 12m</span></div>
-            <div className="impact-row"><span className="ir-lake">Ashtamudi</span><span className="ir-bar"><span className="ir-fill safe" style={{ width: '18%' }} /></span><span className="ir-time">9h 50m</span></div>
-            <div className="impact-row"><span className="ir-lake">Wular</span><span className="ir-bar"><span className="ir-fill safe" style={{ width: '6%' }} /></span><span className="ir-time">11h 30m</span></div>
+            {!selectedLake && <div className="impact-row"><span className="ir-lake">Select a source lake</span></div>}
+            {selectedLake && impacts.length === 0 && <div className="impact-row"><span className="ir-lake">No water bodies within 12h reach</span></div>}
+            {impacts.map(({ lake, minutes }) => {
+              const tone = minutes < 180 ? 'crit' : minutes < 480 ? 'warn' : '';
+              const reached = tPlus > 0 && tPlus >= minutes;
+              return (
+                <div className={'impact-row ' + tone} key={lake.id}>
+                  <span className="ir-lake">{lake.name}</span>
+                  <span className="ir-bar"><span className={'ir-fill ' + (tone === 'warn' ? 'warn' : tone ? '' : 'safe')} style={{ width: `${Math.round((1 - minutes / SIM_MINUTES) * 100)}%` }} /></span>
+                  <span className="ir-time">{reached ? 'reached' : fmtDur(minutes)}</span>
+                </div>
+              );
+            })}
 
             <div className="spread-stats">
-              <div className="stat-line"><span className="lbl">Watershed affected</span><span className="v">{selectedLake && tPlus > 0 ? (Math.PI * Math.pow((tPlus * (selectedLake.metricValue * 8 + 20)) / 1000, 2)).toFixed(1) : '0.0'} km²</span></div>
-              <div className="stat-line"><span className="lbl">Population in zone</span><span className="v">{selectedLake && tPlus > 0 ? Math.floor(tPlus * selectedLake.metricValue * 0.42) + 'k' : '0'}</span></div>
+              <div className="stat-line"><span className="lbl">Watershed affected</span><span className="v">{affectedKm2.toFixed(1)} km²</span></div>
+              <div className="stat-line"><span className="lbl">Population in zone</span><span className="v">{(affectedKm2 * TN_DENSITY_PER_KM2 / 1000).toFixed(1)}k</span></div>
               <div className="stat-line"><span className="lbl">Confidence (95% CI)</span><span className="v">±8.3%</span></div>
-              <div className="stat-line"><span className="lbl">Est. economic impact</span><span className="v" style={{ color: 'var(--tertiary-container)' }}>{selectedLake && tPlus > 0 ? '₹ ' + (tPlus * selectedLake.metricValue * 0.015).toFixed(1) + ' Cr' : '₹ 0.0 Cr'}</span></div>
+              <div className="stat-line"><span className="lbl">Est. economic impact</span><span className="v" style={{ color: 'var(--tertiary-container)' }}>{'₹ ' + (affectedKm2 * (selectedLake ? (selectedLake.metricValue || 0) + 10 : 0) * 0.002).toFixed(1) + ' Cr'}</span></div>
             </div>
           </div>
         </aside>

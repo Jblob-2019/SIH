@@ -75,6 +75,7 @@ const Ico = ({ name }) => {
 };
 
 export default function Sidebar({ active, metrics, online, user, onLogout }) {
+  const offlineData = metrics && metrics.dataSource === 'offline';
   const [collapsed, setCollapsed] = useState(false);
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -127,9 +128,9 @@ export default function Sidebar({ active, metrics, online, user, onLogout }) {
         <button className="btn small" onClick={onLogout} style={{ padding: '4px 8px', fontSize: 11 }}>Logout</button>
       </div>
       <div className="side-foot" style={{ borderTop: 'none', paddingTop: 0 }}>
-        <div className="live-pill" title={online ? 'API reachable' : 'API unreachable'}>
-          <span className="dot" style={online ? {} : { background: 'var(--error)', boxShadow: '0 0 6px var(--error)' }} />
-          {online ? 'Live · API' : 'Offline'}
+        <div className="live-pill" title={!online ? 'API unreachable' : offlineData ? 'API reachable · database unreachable, showing offline data' : 'API reachable'}>
+          <span className="dot" style={!online ? { background: 'var(--error)', boxShadow: '0 0 6px var(--error)' } : offlineData ? { background: 'var(--tertiary-container)', boxShadow: '0 0 6px var(--tertiary-container)' } : {}} />
+          {!online ? 'Offline' : offlineData ? 'API · Offline data' : 'Live · API'}
         </div>
       </div>
     </aside>

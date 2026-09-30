@@ -1,4 +1,13 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
+import { api } from '../lib/api.js';
+import { useApi, wqiOf } from '../lib/hooks.js';
+
+const recommendationFor = l => {
+  if (l.dissolved_oxygen != null && l.dissolved_oxygen < 5) return 'Aerate · monitor fish stress';
+  if (l.ph != null && (l.ph < 6.5 || l.ph > 8.5)) return 'pH stabilize · trace source';
+  if (l.turbidity != null && l.turbidity > 25) return 'Sediment control · desilt';
+  return 'Maintain · routine survey';
+};
 
 const species = [
   { sp: 'catla',       name: 'Catla catla',         sub: 'Indian carp · planktivore',     pct: 88, fill: 'var(--error)',                  pill: 'crit', pl: 'crit' },
@@ -12,19 +21,19 @@ const species = [
   { sp: 'daphnia',     name: 'Daphnia magna',        sub: 'Water flea · zooplankton',      pct: 12, fill: 'var(--surface-tint)',          pill: 'ok',   pl: 'stable' }
 ];
 
-const fishIcon = (() => (
+const fishIcon = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
     <path d="M3 12c2-3 5-4 9-4s7 1 9 4c-2 3-5 4-9 4s-7-1-9-4z" />
     <path d="M3 12l-2-1.5M3 12l-2 1.5" />
     <circle cx="9" cy="12" r=".7" fill="currentColor" />
   </svg>
-));
+);
 
-const botanicalIcon = (() => (
+const botanicalIcon = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6">
     <path d="M12 4v16M8 8c-2 2-2 4 0 6M16 8c2 2 2 4 0 6M8 16c-2 0-3 1-3 2M16 16c2 0 3 1 3 2" />
   </svg>
-));
+);
 
 const gauges = [
   { v: 65, l: 'DO balance',       col: 'var(--secondary)',             off: 44 },
@@ -44,24 +53,42 @@ const ecoActions = [
 ];
 
 export default function Biodiversity() {
+  const lakes = useApi(api.lakes);
+  const bio = useApi(api.biodiversity);
+  const [lakeFilter, setLakeFilter] = useState('all');
+
+  const lakeList = (lakes.data && lakes.data.lakes) || [];
+  const mortality = (bio.data && bio.data.species) || [];
+
+  // reported mortality (marine_mortality) summed per lake
+  const mortByLake = useMemo(() => {
+    const m = {};
+    mortality.forEach(r => {
+      const lake = r.lake || String(r.trend || '').replace(/^at /, '');
+      m[lake] = (m[lake] || 0) + (Number(r.count) || 0);
+    });
+    return m;
+  }, [mortality]);
+  const totalMort = Object.values(mortByLake).reduce((a, b) => a + b, 0);
+  const worstLakes = Object.entries(mortByLake).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n]) => n);
+
+  const rows = useMemo(() => lakeList
+    .filter(l => lakeFilter === 'all' || l.name === lakeFilter)
+    .map(l => ({ l, wqi: wqiOf(l), mort: mortByLake[l.name] || 0 }))
+    .sort((a, b) => (b.mort - a.mort) || (a.wqi - b.wqi)), [lakeList, lakeFilter, mortByLake]);
+
   return (
     <div className="view active">
       <div className="section-h">
         <div>
           <div className="eyebrow" style={{ color: 'var(--secondary)' }}>AquaMind · ecological models · v4.2</div>
           <h1>Biodiversity Prediction</h1>
-          <div className="sub">12 lakes · 9 species classes · microbe model + fish mortality projection · forecast horizon 14d</div>
+          <div className="sub">{lakeList.length} lakes · 9 species classes · microbe model + fish mortality projection · forecast horizon 14d</div>
         </div>
         <div className="actions">
-          <select className="btn ghost" aria-label="Filter by lake" style={{ paddingRight: 24 }}>
-            <option>All lakes</option>
-            <option>Bellandur</option>
-            <option>Chilika</option>
-            <option>Loktak</option>
-            <option>Vembanad</option>
-            <option>Dal</option>
-            <option>Hussain Sagar</option>
-            <option>Pangong</option>
+          <select className="btn ghost" aria-label="Filter by lake" style={{ paddingRight: 24 }} value={lakeFilter} onChange={e => setLakeFilter(e.target.value)}>
+            <option value="all">All lakes</option>
+            {lakeList.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
           </select>
           <button className="btn ghost">14d horizon</button>
           <button className="btn">Download report</button>
@@ -88,9 +115,9 @@ export default function Biodiversity() {
           </div>
         </div>
         <div className="ok-tile">
-          <div className="eyebrow" style={{ color: 'var(--error)' }}>Projected fish mortality</div>
-          <div className="ok-num">3,840<span className="unit">kg · 14d</span></div>
-          <div className="ok-delta down">↑ 22% vs last 14d · driven by Bellandur + Surajkund</div>
+          <div className="eyebrow" style={{ color: 'var(--error)' }}>Reported fish mortality</div>
+          <div className="ok-num">{totalMort.toLocaleString()}<span className="unit">fish</span></div>
+          <div className="ok-delta down">{worstLakes.length ? `driven by ${worstLakes.join(' + ')}` : bio.loading ? 'loading…' : 'no mortality reported'}</div>
         </div>
         <div className="ok-tile">
           <div className="eyebrow" style={{ color: 'var(--secondary)' }}>Species at risk</div>
@@ -197,43 +224,35 @@ export default function Biodiversity() {
       <div className="card glass" style={{ marginTop: 12 }}>
         <div className="card-h">
           <h3>Per-lake biodiversity index</h3>
-          <div className="right">12 of 12 lakes · sorted by risk</div>
+          <div className="right">{rows.length} of {lakeList.length} lakes · sorted by risk</div>
         </div>
         <div className="tbl-wrap" style={{ border: 0, background: 'transparent' }}>
           <table className="tbl">
             <thead><tr>
               <th>Lake</th><th>Region</th><th>Bio Index</th><th>WQI</th>
-              <th>Species observed</th><th>Mortality 14d</th><th>Trend</th><th>Risk</th><th>Recommendation</th>
+              <th>DO (mg/L)</th><th>Mortality reported</th><th>Turbidity</th><th>Risk</th><th>Recommendation</th>
             </tr></thead>
             <tbody>
-              <tr>
-                <td className="label">Bellandur</td><td>Karnataka</td>
-                <td className="num">28</td><td className="num">31</td>
-                <td>11 / 23</td><td className="num" style={{ color: 'var(--error)' }}>1,420 kg</td>
-                <td className="num" style={{ color: 'var(--error)' }}>↓ 12</td>
-                <td><span className="pill crit"><span className="pip" />crit</span></td>
-                <td className="label">Aerate · relocate Hilsa</td>
-              </tr>
-              {['Surajkund', 'Hussain Sagar', 'Nakki', 'Vembanad', 'Dal', 'Loktak', 'Bhojtal', 'Chilika', 'Pangong', 'Wular', 'Sambhar'].map((n, i) => {
-                const bio = 40 + i * 4;
-                const wqi = 50 + i * 4;
-                const mort = 1200 - i * 80;
-                const sp = `${10 + (i % 4)} / 23`;
+              {rows.length === 0 && (
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 16 }}>{lakes.loading ? 'Loading…' : 'No lakes.'}</td></tr>
+              )}
+              {rows.map(({ l, wqi, mort }) => {
+                const risk = l.status === 'crit' || mort > 500 ? 'crit' : l.status === 'warn' || mort > 0 ? 'warn' : 'ok';
                 return (
-                  <tr key={n}>
-                    <td className="label">{n}</td>
-                    <td>{['Haryana', 'Telangana', 'Rajasthan', 'Kerala', 'J&K', 'Manipur', 'MP', 'Odisha', 'Ladakh', 'J&K', 'Rajasthan'][i]}</td>
-                    <td className="num">{bio}</td>
-                    <td className="num">{wqi}</td>
-                    <td>{sp}</td>
-                    <td className="num" style={{ color: mort > 600 ? 'var(--error)' : '' }}>{mort} kg</td>
-                    <td className="num" style={{ color: i < 2 ? 'var(--error)' : 'var(--secondary)' }}>{i < 2 ? '↓' : '▲'} {Math.abs(i - 2) + 1}</td>
+                  <tr key={l.id}>
+                    <td className="label">{l.name}</td>
+                    <td>{l.city}</td>
+                    <td className="num">{Math.round(wqi * 0.9 - Math.min(20, mort / 50))}</td>
+                    <td className="num">{wqi.toFixed(0)}</td>
+                    <td className="num" style={{ color: l.dissolved_oxygen < 5 ? 'var(--error)' : '' }}>{l.dissolved_oxygen ?? '—'}</td>
+                    <td className="num" style={{ color: mort > 0 ? 'var(--error)' : '' }}>{mort.toLocaleString()}</td>
+                    <td className="num">{l.turbidity == null ? '—' : `${l.turbidity} NTU`}</td>
                     <td>
-                      <span className={`pill ${i < 2 ? 'crit' : i < 4 ? 'warn' : 'ok'}`}>
-                        <span className="pip" />{i < 2 ? 'crit' : i < 4 ? 'watch' : 'stable'}
+                      <span className={`pill ${risk}`}>
+                        <span className="pip" />{risk === 'crit' ? 'crit' : risk === 'warn' ? 'watch' : 'stable'}
                       </span>
                     </td>
-                    <td className="label">{['Aerate · relocate Hilsa', 'Sample outflows', 'Bloom treatment', 'Seagrass restoration', 'Maintain', 'Restore benthic', 'Schedule dredge', 'Replace sensor', 'Survey-only', 'Monitor', 'PH stabilize'][i]}</td>
+                    <td className="label">{recommendationFor(l)}</td>
                   </tr>
                 );
               })}

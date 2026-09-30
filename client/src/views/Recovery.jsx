@@ -1,4 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import { api } from '../lib/api.js';
+import { useApi } from '../lib/hooks.js';
+
+const toneFor = pct => pct >= 80 ? { fillCls: 'ok', tone: 'on plan', toneCol: 'var(--secondary)' }
+  : pct >= 50 ? { fillCls: '', tone: 'monitoring', toneCol: 'var(--surface-tint)' }
+  : pct >= 30 ? { fillCls: 'warn', tone: 'behind', toneCol: 'var(--tertiary-container)' }
+  : { fillCls: 'crit', tone: 'early stage', toneCol: 'var(--error)' };
 
 const programmes = [
   { title: 'Dal · INC-2814',             sub: 'Algal bloom · cleanup complete',         pct: 96, fillCls: 'ok',   fillW: '96%', day: 'Day 12 / 14', tone: 'on plan',     toneCol: 'var(--secondary)' },
@@ -10,13 +17,26 @@ const programmes = [
 ];
 
 export default function Recovery() {
+  const rec = useApi(api.recovery);
+  const live = (rec.data && rec.data.programs) || [];
+
+  // vw_revival_progress rows → progress rows; seed programmes only if the endpoint fails
+  const rows = useMemo(() => (rec.error ? programmes : live.map(p => {
+    const pct = Math.round(Number(p.pct) || 0);
+    return { title: `${p.lake} · ${p.id}`, sub: p.stage || 'Revival scheme', pct, fillW: `${pct}%`, day: '', ...toneFor(pct) };
+  })), [live, rec.error]);
+
+  const avg = rows.length ? rows.reduce((a, r) => a + r.pct, 0) / rows.length : 0;
+  const onTrack = rows.filter(r => r.pct >= 50).length;
+  const remaining = rows.filter(r => r.pct < 100).length;
+
   return (
     <div className="view active">
       <div className="section-h">
         <div>
           <div className="eyebrow">Post-incident · 30d rolling</div>
           <h1>Recovery Progress Tracking</h1>
-          <div className="sub">6 active recovery plans · 18 closed in last 90 days · model v3.2</div>
+          <div className="sub">{rows.length} active recovery plans · revival schemes from vw_revival_progress</div>
         </div>
         <div className="actions">
           <button className="btn ghost">Compare</button>
@@ -27,8 +47,8 @@ export default function Recovery() {
       <div className="recovery-kpi">
         <div className="rk-hero">
           <div className="rk-eyebrow">Active portfolio recovery</div>
-          <div className="rk-big">62.4%</div>
-          <div className="rk-sub">+14.2% over last 14d · on plan</div>
+          <div className="rk-big">{avg.toFixed(1)}%</div>
+          <div className="rk-sub">mean progress across {rows.length} plans</div>
           <svg viewBox="0 0 320 80" className="rk-trend" preserveAspectRatio="none">
             <polyline fill="rgba(78,222,163,.18)" stroke="none" points="0,62 24,58 48,60 72,52 96,46 120,40 144,36 168,32 192,22 216,18 240,14 264,12 288,8 320,4 320,80 0,80" />
             <polyline fill="none" stroke="var(--secondary)" strokeWidth="2" points="0,62 24,58 48,60 72,52 96,46 120,40 144,36 168,32 192,22 216,18 240,14 264,12 288,8 320,4" />
@@ -41,20 +61,21 @@ export default function Recovery() {
         </div>
         <div className="rk-tile">
           <div className="eyebrow">Plans on track</div>
-          <div className="rk-num">5<span className="unit">/6</span></div>
-          <div className="rk-delta warn">1 behind · Chilika sensors</div>
+          <div className="rk-num">{onTrack}<span className="unit">/{rows.length}</span></div>
+          <div className="rk-delta warn">{rows.length - onTrack} below 50% progress</div>
         </div>
         <div className="rk-tile">
-          <div className="eyebrow">Est. closure</div>
-          <div className="rk-num">17d</div>
-          <div className="rk-delta">median · remaining 6 plans</div>
+          <div className="eyebrow">Open plans</div>
+          <div className="rk-num">{remaining}</div>
+          <div className="rk-delta">plans still open</div>
         </div>
       </div>
       <div className="two-col" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <div className="card glass">
-          <div className="card-h"><h3>Active recovery · per lake</h3><div className="right">6 plans</div></div>
+          <div className="card-h"><h3>Active recovery · per lake</h3><div className="right">{rows.length} plans</div></div>
           <div className="recovery-list">
-            {programmes.map((p, i) => (
+            {rows.length === 0 && <div style={{ padding: 16, color: 'var(--on-surface-variant)' }}>{rec.loading ? 'Loading…' : 'No active revival schemes.'}</div>}
+            {rows.map((p, i) => (
               <div className="rl-row" key={i}>
                 <div className="rl-nm">
                   <div className="rl-title">{p.title}</div>

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
-import { useApi, pill } from '../lib/hooks.js';
+import { useApi, wqiOf } from '../lib/hooks.js';
 
 const pillFor = (status) => {
   if (status === 'crit') return 'pill crit';
@@ -14,15 +14,26 @@ export default function Lakes() {
   const lakes = useApi(api.lakes);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [district, setDistrict] = useState('all');
+  const [sort, setSort] = useState('wqi-asc');
+
+  const all = useMemo(() => (lakes.data && lakes.data.lakes) || [], [lakes.data]);
+  const districts = useMemo(() => [...new Set(all.map(l => l.city))].sort(), [all]);
 
   const filtered = useMemo(() => {
-    const list = (lakes.data && lakes.data.lakes) || [];
-    return list.filter(l => {
+    const out = all.filter(l => {
       const matchesQ = !q || l.name.toLowerCase().includes(q.toLowerCase()) || l.city.toLowerCase().includes(q.toLowerCase());
       const matchesS = statusFilter === 'all' || l.status === statusFilter;
-      return matchesQ && matchesS;
+      const matchesD = district === 'all' || l.city === district;
+      return matchesQ && matchesS && matchesD;
     });
-  }, [lakes.data, q, statusFilter]);
+    const cmp = {
+      'wqi-asc':  (a, b) => wqiOf(a) - wqiOf(b),
+      'wqi-desc': (a, b) => wqiOf(b) - wqiOf(a),
+      'updated':  (a, b) => new Date(b.recorded_at || 0) - new Date(a.recorded_at || 0)
+    }[sort];
+    return out.sort(cmp);
+  }, [all, q, statusFilter, district, sort]);
 
   const counts = useMemo(() => {
     const c = { ok: 0, warn: 0, crit: 0 };
@@ -30,20 +41,13 @@ export default function Lakes() {
     return c;
   }, [lakes.data]);
 
-  const total = lakes.data ? lakes.data.lakes.length : 412;
-
-  // pseudo-WQI / ph / DO / turbidity from area + status (deterministic per lake)
-  const readingFor = (l, i) => ({
-    wqi:  l.status === 'crit' ? (28 + (i % 7)) : l.status === 'warn' ? (45 + (i % 9)) : (72 + (i % 8)),
-    ph:   +(6.4 + ((i * 0.07) % 1.2)).toFixed(1),
-    do:   +(l.status === 'crit' ? 2 + (i % 2) * 0.4 : 6 + (i % 3)).toFixed(1),
-    turbidity: l.status === 'crit' ? 120 + (i * 7) % 80 : 4 + (i * 3) % 12
-  });
+  const total = all.length;
+  const fmt = (v, d = 1) => (v == null ? '—' : Number(v).toFixed(d));
 
   return (
     <div className="view active">
       <div className="section-h">
-        <div><h1>Lakes · Inventory</h1><div className="sub">{total} monitored water bodies · 12 states &amp; 4 UTs</div></div>
+        <div><h1>Lakes · Inventory</h1><div className="sub">{total} monitored water bodies · {districts.length} districts · Tamil Nadu</div></div>
         <div className="actions">
           <button className="btn">Import CSV</button>
           <button className="btn pri">+ Register Lake</button>
@@ -52,19 +56,21 @@ export default function Lakes() {
 
       <div className="filter-row">
         <div className="filter-input">⌕ <input placeholder="Search by name, region, district…" value={q} onChange={e => setQ(e.target.value)} /></div>
-        <select className="select"><option>All States</option><option>Karnataka</option><option>Rajasthan</option><option>Telangana</option><option>Odisha</option><option>Jammu &amp; Kashmir</option></select>
+        <select className="select" value={district} onChange={e => setDistrict(e.target.value)}>
+          <option value="all">All Districts</option>
+          {districts.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
         <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="all">All Status</option>
           <option value="crit">Critical</option>
           <option value="warn">At Risk</option>
           <option value="ok">Healthy</option>
         </select>
-        <select className="select"><option>WQI · Low to High</option><option>WQI · High to Low</option><option>Last Updated</option></select>
-        <div className="tag-row" style={{ marginLeft: 'auto' }}>
-          <span className="tag active">Grid</span>
-          <span className="tag">Table</span>
-          <span className="tag">Cards</span>
-        </div>
+        <select className="select" value={sort} onChange={e => setSort(e.target.value)}>
+          <option value="wqi-asc">WQI · Low to High</option>
+          <option value="wqi-desc">WQI · High to Low</option>
+          <option value="updated">Last Updated</option>
+        </select>
       </div>
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
@@ -96,28 +102,27 @@ export default function Lakes() {
 
       <div className="tbl-wrap">
         <table className="tbl">
-          <thead><tr><th>Lake</th><th>State / Region</th><th>WQI</th><th>pH</th><th>DO (mg/L)</th><th>Turbidity</th><th>Coverage</th><th>Status</th><th>Last Update</th><th></th></tr></thead>
+          <thead><tr><th>Lake</th><th>State / Region</th><th>WQI</th><th>pH</th><th>DO (mg/L)</th><th>Turbidity</th><th>Water Level</th><th>Status</th><th>Last Update</th><th></th></tr></thead>
           <tbody>
             {filtered.length === 0 && (
               <tr><td colSpan={10} style={{ textAlign: 'center', padding: 20, color: 'var(--on-surface-variant)' }}>{lakes.loading ? 'Loading…' : 'No lakes match the filter.'}</td></tr>
             )}
-            {filtered.map((l, i) => {
-              const r = readingFor(l, i);
-              const coverage = l.status === 'crit' ? 18 + (i * 7) % 12 : 80 + (i * 3) % 18;
-              const last = new Date(Date.now() - (i * 3600000)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            {filtered.map(l => {
+              const wqi = wqiOf(l);
+              const last = l.recorded_at ? new Date(l.recorded_at).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
               return (
                 <tr key={l.id}>
                   <td className="label">{l.name}</td>
                   <td>{l.state} · {l.city}</td>
-                  <td className="num" style={{ color: l.status === 'crit' ? 'var(--error)' : l.status === 'warn' ? 'var(--tertiary-container)' : 'var(--on-surface)' }}>{r.wqi.toFixed(1)}</td>
-                  <td className="num">{r.ph}</td>
-                  <td className="num">{r.do}</td>
-                  <td className="num">{r.turbidity.toFixed(1)} NTU</td>
-                  <td className="num">{coverage}%</td>
+                  <td className="num" style={{ color: l.status === 'crit' ? 'var(--error)' : l.status === 'warn' ? 'var(--tertiary-container)' : 'var(--on-surface)' }}>{wqi.toFixed(1)}</td>
+                  <td className="num">{fmt(l.ph)}</td>
+                  <td className="num">{fmt(l.dissolved_oxygen)}</td>
+                  <td className="num">{l.turbidity == null ? '—' : `${fmt(l.turbidity)} NTU`}</td>
+                  <td className="num">{l.water_level_m == null ? '—' : `${fmt(l.water_level_m)} m`}</td>
                   <td><span className={pillFor(l.status)}><span className="pip" />{l.status === 'crit' ? 'Critical' : l.status === 'warn' ? 'At Risk' : 'Healthy'}</span></td>
                   <td className="num">{last}</td>
                   <td className="row-actions">
-                    <button className="iconbtn" title="Open">→</button>
+                    <a className="iconbtn" title="Show on map" href="#map">→</a>
                   </td>
                 </tr>
               );

@@ -1,4 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import { api } from '../lib/api.js';
+import { useApi } from '../lib/hooks.js';
+
+const hhmm = iso => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
 
 const flashes = [
   { id: 'FA-2204', t: '14:31', tone: 'crit', lake: 'Bellandur',     body: 'industrial discharge 220 L/min from S-04 · foam overflow imminent', sev: 'SEV-1', off: '5 officers dispatched', eta: 'ETA 38m' },
@@ -40,11 +44,37 @@ const channels = [
 ];
 
 export default function Emergency() {
+  const em = useApi(api.emergency);
+  const inc = useApi(api.incidents);
+
+  const alerts = (em.data && em.data.alerts) || [];
+  // live SEV-1 alerts (high-severity unresolved damage_control rows) first,
+  // followed by other open incidents as SEV-2/3
+  const liveFlashes = useMemo(() => {
+    const sev1 = alerts.map(a => {
+      const [lake, ...rest] = a.title.split(' - ');
+      return { id: a.id, t: hhmm(a.ts), tone: 'crit', lake, body: rest.join(' - ') || a.title, sev: 'SEV-1', off: 'dispatch pending', eta: '—', ts: a.ts };
+    });
+    const others = ((inc.data && inc.data.incidents) || [])
+      .filter(i => i.severity !== 'crit' && !['closed', 'resolved'].includes(String(i.status).toLowerCase()))
+      .map(i => ({ id: i.id, t: hhmm(i.openedAt), tone: i.severity === 'warn' ? 'warn' : '', lake: i.lake, body: i.title, sev: i.severity === 'warn' ? 'SEV-2' : 'SEV-3', off: i.status, eta: '—', ts: i.openedAt }));
+    return [...sev1, ...others];
+  }, [alerts, inc.data]);
+
+  const shown = em.error ? flashes : liveFlashes;
+  const sev1Count = shown.filter(f => f.sev === 'SEV-1').length;
+  const topSev = sev1Count ? 'SEV-1' : shown.some(f => f.sev === 'SEV-2') ? 'SEV-2' : shown.length ? 'SEV-3' : 'none';
+  const timeline = shown.length && !em.error
+    ? [...shown].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 7).map(f => ({
+        tone: f.tone, t: `${f.t} · ${f.sev} ${f.lake}`, m: `Auto · ${f.body}`
+      }))
+    : escalation;
+
   return (
     <div className="view active">
       <div className="section-h">
         <div>
-          <div className="eyebrow" style={{ color: 'var(--error)' }}>Active protocol · SEV-2</div>
+          <div className="eyebrow" style={{ color: 'var(--error)' }}>Active protocol · {topSev}</div>
           <h1 style={{ color: 'var(--error)' }}>Emergency Mode</h1>
           <div className="sub">All-hands · Auto-escalation · Officer dispatch · Flash alerts</div>
         </div>
@@ -55,8 +85,11 @@ export default function Emergency() {
       </div>
       <div className="em-grid">
         <div className="card glass em-summary">
-          <div className="card-h"><h3>Active flash alerts</h3><div className="right" style={{ color: 'var(--error)' }}>3 critical</div></div>
-          {flashes.map(f => (
+          <div className="card-h"><h3>Active flash alerts</h3><div className="right" style={{ color: 'var(--error)' }}>{sev1Count} critical</div></div>
+          {shown.length === 0 && (
+            <div style={{ padding: 16, color: 'var(--on-surface-variant)' }}>{em.loading ? 'Loading…' : 'No active alerts.'}</div>
+          )}
+          {shown.map(f => (
             <div className={'flash-card ' + f.tone} key={f.id}>
               <div className="fc-head"><span className="fc-id">{f.id}</span><span className="fc-time">{f.t}</span></div>
               <div className="fc-body"><strong>{f.lake}</strong> · {f.body}</div>
@@ -85,7 +118,7 @@ export default function Emergency() {
         <div className="card glass">
           <div className="card-h"><h3>Escalation timeline · 6h</h3><div className="right">auto</div></div>
           <div className="timeline">
-            {escalation.map((e, i) => (
+            {timeline.map((e, i) => (
               <div className={'tl-item ' + e.tone} key={i}>
                 <div className="t">{e.t}</div>
                 <div className="m">{e.m}</div>

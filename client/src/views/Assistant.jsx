@@ -92,17 +92,6 @@ function renderAIResponse(text) {
               let isBold = content.includes('**');
               content = content.replace(/\*\*/g, '');
               
-              // Icon mapping based on keywords
-              let icon = '⚡';
-              const lc = content.toLowerCase();
-              if (lc.includes('fiber') || lc.includes('carb')) icon = '🌾';
-              else if (lc.includes('fat') || lc.includes('heart')) icon = '❤️';
-              else if (lc.includes('protein')) icon = '💪';
-              else if (lc.includes('vitamin') || lc.includes('nutrient') || lc.includes('micro')) icon = '💊';
-              else if (lc.includes('weight')) icon = '⚖️';
-              else if (lc.includes('antioxidant')) icon = '✨';
-              else if (lc.includes('versatil')) icon = '🍲';
-              
               return (
                 <div key={`${rI}-${cI}`} style={{ 
                   padding: '10px 12px', 
@@ -114,7 +103,6 @@ function renderAIResponse(text) {
                   gap: 8,
                   lineHeight: 1.4
                 }}>
-                  {cI === 0 && <span style={{ fontSize: 16 }}>{icon}</span>}
                   <span style={{ fontWeight: isBold || cI === 0 ? 'bold' : 'normal' }}>{content}</span>
                 </div>
               );

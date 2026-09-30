@@ -38,3 +38,34 @@ export const pill = sev => {
   if (s === 'med'  || s === 'moderate' || s === 'review') return 'pill mod';
   return 'pill info';
 };
+
+/** Water-quality index (0–100) from a lake's live readings. Falls back to
+ *  the turbidity-based metricValue when individual parameters are missing. */
+export const wqiOf = l => {
+  if (!l) return 0;
+  if (l.ph == null && l.dissolved_oxygen == null && l.turbidity == null) {
+    return Math.max(0, Math.min(100, 100 - (l.metricValue || 0) * 1.2));
+  }
+  let score = 100;
+  if (l.ph != null) score -= Math.abs(l.ph - 7.2) * 12;
+  if (l.dissolved_oxygen != null) score -= Math.max(0, 7 - l.dissolved_oxygen) * 9;
+  if (l.turbidity != null) score -= l.turbidity * 0.7;
+  return Math.max(0, Math.min(100, score));
+};
+
+export const statusLabel = s => (s === 'crit' ? 'Critical' : s === 'warn' ? 'At Risk' : 'Healthy');
+
+/** WQI for one forecast point ({ do_mgL, ph, turbidity_ntu }). */
+export const forecastWqi = f => wqiOf({ ph: f.ph, dissolved_oxygen: f.do_mgL, turbidity: f.turbidity_ntu });
+
+/** Scale a numeric series into SVG polyline points spanning width × [top, bottom],
+ *  auto-ranged to the data (±pad) so small variations stay visible. */
+export function toPolyline(values, { width = 600, x0 = 0, top = 20, bottom = 200, pad = 5 } = {}) {
+  if (!values.length) return { points: '', y: () => bottom };
+  const lo = Math.min(...values) - pad;
+  const hi = Math.max(...values) + pad;
+  const y = v => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
+  const step = width / Math.max(1, values.length - 1);
+  const points = values.map((v, i) => `${(x0 + i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return { points, y, step };
+}

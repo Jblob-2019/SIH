@@ -3,11 +3,14 @@ import { api } from '../lib/api.js';
 import { useApi } from '../lib/hooks.js';
 
 const sevPill = s => s === 'crit' ? 'pill crit' : s === 'warn' ? 'pill warn' : 'pill mod';
-const statusPill = s => {
-  if (s === 'in progress') return 'pill warn';
+const isClosed = s => ['closed', 'resolved'].includes(String(s).toLowerCase());
+const statusPill = raw => {
+  const s = String(raw || '').toLowerCase();
+  if (s === 'in progress' || s === 'escalated') return 'pill warn';
+  if (s === 'acknowledged') return 'pill info';
   if (s === 'dispatched') return 'pill info';
   if (s === 'monitoring') return 'pill ok';
-  if (s === 'closed') return 'pill ok';
+  if (s === 'closed' || s === 'resolved') return 'pill ok';
   return 'pill';
 };
 
@@ -38,25 +41,52 @@ function slaLeft(iso) {
 
 export default function Incidents() {
   const incidents = useApi(api.incidents);
+  const lakes = useApi(api.lakes);
+  const lakeNames = useMemo(() => ((lakes.data && lakes.data.lakes) || []).map(l => l.name), [lakes.data]);
   const [selectedId, setSelectedId] = useState(null);
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [addTitle, setAddTitle] = useState('');
-  const [addLake, setAddLake] = useState('Powai Lake');
+  const [addLake, setAddLake] = useState('');
   const [addSeverity, setAddSeverity] = useState('warn');
+  const [addError, setAddError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const handleAdd = async () => {
-    if (!addTitle) return;
-    await api.createIncident({ title: addTitle, lake: addLake, severity: addSeverity });
-    setShowAdd(false);
-    setAddTitle('');
-    incidents.refetch();
+    const lake = addLake || lakeNames[0];
+    if (!addTitle.trim()) { setAddError('Title is required'); return; }
+    if (!lake) { setAddError('Select a lake'); return; }
+    setSaving(true);
+    setAddError('');
+    try {
+      const created = await api.createIncident({ title: addTitle.trim(), lake, severity: addSeverity });
+      setShowAdd(false);
+      setAddTitle('');
+      setSelectedId(created.id);
+      incidents.refetch();
+    } catch (err) {
+      setAddError(err.message || 'Failed to report incident');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateSelected = async (patch) => {
+    if (!selected) return;
+    setActionError('');
+    try {
+      await api.patchIncident(selected.id, patch);
+      incidents.refetch();
+    } catch (err) {
+      setActionError(err.message || 'Update failed');
+    }
   };
 
   const list = useMemo(() => (incidents.data && incidents.data.incidents) || [], [incidents.data]);
   const counts = useMemo(() => {
     const c = { open: 0, crit: 0 };
-    list.forEach(i => { if (i.status !== 'closed') c.open++; if (i.severity === 'crit') c.crit++; });
+    list.forEach(i => { if (!isClosed(i.status)) c.open++; if (i.severity === 'crit') c.crit++; });
     return c;
   }, [list]);
 
@@ -75,11 +105,11 @@ export default function Incidents() {
               <thead><tr><th>ID</th><th>Lake</th><th>Type</th><th>Severity</th><th>Opened</th><th>SLA</th><th>Team</th><th>Status</th></tr></thead>
               <tbody>
                 {list.length === 0 && (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20 }}>{incidents.loading ? 'Loading…' : 'No incidents.'}</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20 }}>{incidents.loading ? 'Loading…' : incidents.error ? `Failed to load incidents: ${incidents.error.message}` : 'No incidents.'}</td></tr>
                 )}
                 {list.map(inc => (
-                  <tr key={inc.id} onClick={() => setSelectedId(inc.id)} style={{ cursor: 'pointer' }}>
-                    <td className="num" style={{ color: 'var(--surface-tint)' }}>#{inc.id.replace(/^inc-/, 'INC-')}</td>
+                  <tr key={inc.id} onClick={() => setSelectedId(inc.id)} style={{ cursor: 'pointer', background: selected && selected.id === inc.id ? 'var(--surface-container-high)' : undefined }}>
+                    <td className="num" style={{ color: 'var(--surface-tint)' }}>#{inc.id}</td>
                     <td className="label">{inc.lake}</td>
                     <td>{inc.title}</td>
                     <td><span className={sevPill(inc.severity)}><span className="pip" />{inc.severity === 'crit' ? 'Critical' : inc.severity === 'warn' ? 'High' : 'Med'}</span></td>
@@ -97,6 +127,7 @@ export default function Incidents() {
           <div className="card glass" style={{ marginBottom: 10 }}>
             <div className="card-h"><h3>{selected ? `Incident · ${selected.lake}` : 'Selected'}</h3><span className="right" style={{ color: 'var(--error)' }}>{selected ? (selected.severity || '').toUpperCase() : ''}</span></div>
             <div className="stat-line"><span className="lbl">Type</span><span className="v">{selected ? selected.title : '—'}</span></div>
+            <div className="stat-line"><span className="lbl">Status</span><span className="v">{selected ? selected.status : '—'}</span></div>
             <div className="stat-line"><span className="lbl">Opened</span><span className="v">{selected ? new Date(selected.openedAt).toLocaleTimeString() : '—'}</span></div>
             <div className="stat-line"><span className="lbl">Team</span><span className="v">{selected ? (selected.team || 'Alpha-3 · 6 pax') : '—'}</span></div>
             <div className="stat-line"><span className="lbl">ETA on-site</span><span className="v">14:48</span></div>
@@ -105,9 +136,11 @@ export default function Incidents() {
               <strong style={{ color: 'var(--on-surface)' }}>Root cause hypothesis:</strong> Industrial surfactant discharge at S-12 outflow combined with low wind. Foam extent mapped at 1.4 ha. Aeration boats dispatched.
             </div>
             <div style={{ display: 'flex', gap: 5, marginTop: 10 }}>
-              <button className="btn pri" style={{ flex: 1, justifyContent: 'center' }}>Acknowledge</button>
-              <button className="btn" style={{ flex: 1, justifyContent: 'center' }}>Escalate</button>
+              <button className="btn pri" style={{ flex: 1, justifyContent: 'center' }} disabled={!selected} onClick={() => updateSelected({ status: 'Acknowledged' })}>Acknowledge</button>
+              <button className="btn" style={{ flex: 1, justifyContent: 'center' }} disabled={!selected || selected.severity === 'crit'} onClick={() => updateSelected({ severity: 'crit', status: 'Escalated' })}>Escalate</button>
+              <button className="btn" style={{ flex: 1, justifyContent: 'center' }} disabled={!selected} onClick={() => updateSelected({ status: 'Resolved' })}>Resolve</button>
             </div>
+            {actionError && <div style={{ marginTop: 8, color: 'var(--error)', fontSize: 12 }}>{actionError}</div>}
           </div>
           <div className="card glass">
             <div className="card-h"><h3>Active Field Teams</h3><div className="right">23 deployed</div></div>
@@ -128,11 +161,9 @@ export default function Incidents() {
             <h3 style={{ marginBottom: 15 }}>Report Incident</h3>
             <label className="form-row" style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
               <span className="form-l">Lake</span>
-              <select value={addLake} onChange={e => setAddLake(e.target.value)} style={{ padding: 8, borderRadius: 'var(--r)', background: 'var(--surface-container)', color: 'var(--on-surface)', border: '1px solid var(--outline)' }}>
-                <option>Powai Lake</option>
-                <option>Dal Lake</option>
-                <option>Sukhna Lake</option>
-                <option>Loktak Lake</option>
+              <select value={addLake || lakeNames[0] || ''} onChange={e => setAddLake(e.target.value)} style={{ padding: 8, borderRadius: 'var(--r)', background: 'var(--surface-container)', color: 'var(--on-surface)', border: '1px solid var(--outline)' }}>
+                {lakeNames.length === 0 && <option value="">{lakes.loading ? 'Loading lakes…' : 'No lakes available'}</option>}
+                {lakeNames.map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </label>
             <label className="form-row" style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
@@ -147,9 +178,10 @@ export default function Incidents() {
                 <option value="crit">Critical</option>
               </select>
             </label>
+            {addError && <div style={{ marginBottom: 12, color: 'var(--error)', fontSize: 13 }}>{addError}</div>}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn pri" onClick={handleAdd}>Submit</button>
+              <button className="btn" onClick={() => { setShowAdd(false); setAddError(''); }}>Cancel</button>
+              <button className="btn pri" onClick={handleAdd} disabled={saving}>{saving ? 'Submitting…' : 'Submit'}</button>
             </div>
           </div>
         </div>

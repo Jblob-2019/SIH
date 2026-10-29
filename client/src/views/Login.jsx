@@ -7,9 +7,12 @@ export default function Login({ onLogin }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (username === 'admin' && password === 'admin123') {
+    // tolerate autofill/mobile quirks: stray whitespace and auto-capitalised usernames
+    const user = username.trim().toLowerCase();
+    const pass = password.trim();
+    if (user === 'admin' && pass === 'admin123') {
       onLogin({ username: 'admin', role: 'admin' });
-    } else if (username === 'city1' && password === 'city123') {
+    } else if (user === 'city1' && pass === 'city123') {
       onLogin({ username: 'city1', role: 'citizen' });
     } else {
       setError('Invalid username or password');

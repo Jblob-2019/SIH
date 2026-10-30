@@ -1,12 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { api } from '../lib/api.js';
+import { useApi } from '../lib/hooks.js';
 
-const recommendations = [
-  { prio: '↑ 8%',  cls: 'high', txt: 'Add Tech-2 to Bellandur shift rotation',     meta: 'Cost +₹ 0.4L/mo · Risk ↓ 22% · ETA 2d' },
-  { prio: '↑ 12%', cls: 'high', txt: 'Pre-position aerator barge at Hyderabad HQ', meta: 'Cost +₹ 1.2L/mo · Response ↓ 38% · ETA 5d' },
-  { prio: '↓ 14%', cls: 'mid',  txt: 'Defer Chilika sensor replacement to Sep 12',  meta: 'Save ₹ 2.8L · Low risk · ETA 0d' },
-  { prio: '↑ 6%',  cls: 'mid',  txt: 'Move Alpha-3 from Vembanad to Loktak',        meta: 'Risk ↓ 8% · No cost · ETA 1d' },
-  { prio: '↓ 4%',  cls: 'low',  txt: 'Re-rate 7 sensors as scheduled-retire',       meta: 'Save ₹ 0.9L · Hardware end-of-life' }
-];
+const fmtWhen = iso => (iso ? new Date(iso).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
 const budget = [
   { nm: 'Field operations',   pct: 37, v: '₹ 6.8 Cr · 37%', col: 'var(--surface-tint)' },
@@ -28,6 +24,32 @@ const schedule = [
 ];
 
 export default function Optimize() {
+  const rec = useApi(api.optimize);
+  const recommendations = (rec.data && rec.data.recommendations) || [];
+  const pending = recommendations.filter(r => r.status !== 'applied');
+  const appliedCount = recommendations.length - pending.length;
+
+  const [busy, setBusy] = useState('');
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [notice, setNotice] = useState(null); // { ok, text }
+
+  async function run(key, fn, okText) {
+    setBusy(key); setNotice(null);
+    try {
+      const out = await fn();
+      await rec.refetch();
+      setNotice({ ok: true, text: typeof okText === 'function' ? okText(out) : okText });
+    } catch (err) {
+      setNotice({ ok: false, text: err.message || 'Something went wrong' });
+    } finally {
+      setBusy(''); setConfirmAll(false);
+    }
+  }
+
+  const applyOne = r => run(r.id, () => api.applyRecommendation(r.id), `Applied: ${r.text}`);
+  const undoOne  = r => run(r.id, () => api.revertRecommendation(r.id), `Reverted: ${r.text}`);
+  const applyAll = () => run('all', api.applyAllRecommendations, out => `Applied ${out.applied} recommendation${out.applied === 1 ? '' : 's'}.`);
+
   return (
     <div className="view active">
       <div className="section-h">
@@ -39,9 +61,25 @@ export default function Optimize() {
         <div className="actions">
           <button className="btn ghost">Simulate</button>
           <button className="btn">Why these?</button>
-          <button className="btn pri">Apply recommendations</button>
+          {!confirmAll && (
+            <button className="btn pri" disabled={busy !== '' || pending.length === 0} onClick={() => setConfirmAll(true)}>
+              {pending.length === 0 && recommendations.length > 0 ? 'All applied ✓' : `Apply recommendations${pending.length ? ` (${pending.length})` : ''}`}
+            </button>
+          )}
+          {confirmAll && (
+            <>
+              <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--on-surface-variant)' }}>Apply {pending.length} pending recommendation{pending.length === 1 ? '' : 's'}?</span>
+              <button className="btn pri" disabled={busy !== ''} onClick={applyAll}>{busy === 'all' ? 'Applying…' : 'Confirm'}</button>
+              <button className="btn ghost" disabled={busy !== ''} onClick={() => setConfirmAll(false)}>Cancel</button>
+            </>
+          )}
         </div>
       </div>
+      {notice && (
+        <div role="status" style={{ margin: '0 0 12px', padding: '8px 12px', borderRadius: 'var(--r)', fontSize: 13, background: notice.ok ? 'rgba(78,222,163,.12)' : 'rgba(255,180,171,.14)', color: notice.ok ? 'var(--secondary)' : 'var(--error)' }}>
+          {notice.text}
+        </div>
+      )}
       <div className="opt-kpi">
         <div className="ok-tile">
           <div className="eyebrow">Projected cost ↓</div>
@@ -102,17 +140,25 @@ export default function Optimize() {
           </div>
         </div>
         <div className="card glass">
-          <div className="card-h"><h3>AI deployment recommendations</h3><div className="right">5 active</div></div>
-          {recommendations.map((r, i) => (
-            <div className="rec-row" key={i}>
-              <div className={'rec-prio ' + r.cls}>{r.prio}</div>
-              <div>
-                <div className="rec-txt">{r.txt}</div>
-                <div className="rec-meta">{r.meta}</div>
+          <div className="card-h"><h3>AI deployment recommendations</h3><div className="right">{pending.length} active · {appliedCount} applied</div></div>
+          {recommendations.length === 0 && (
+            <div style={{ padding: 14, color: 'var(--on-surface-variant)', fontSize: 13 }}>{rec.loading ? 'Loading…' : rec.error ? `Failed to load: ${rec.error.message}` : 'No recommendations.'}</div>
+          )}
+          {recommendations.map(r => {
+            const applied = r.status === 'applied';
+            return (
+              <div className="rec-row" key={r.id} style={applied ? { opacity: 0.75 } : undefined}>
+                <div className={'rec-prio ' + r.tier}>{r.prio}</div>
+                <div>
+                  <div className="rec-txt">{r.text}</div>
+                  <div className="rec-meta">{applied ? `Applied ${fmtWhen(r.appliedAt)} · ` : ''}{r.meta}</div>
+                </div>
+                {applied
+                  ? <button className="btn small ghost" disabled={busy !== ''} onClick={() => undoOne(r)} title="Revert this recommendation">{busy === r.id ? '…' : '✓ Applied · Undo'}</button>
+                  : <button className="btn small" disabled={busy !== ''} onClick={() => applyOne(r)}>{busy === r.id ? 'Applying…' : 'Apply'}</button>}
               </div>
-              <button className="btn small">Apply</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       <div className="card glass" style={{ marginTop: 12 }}>

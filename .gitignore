@@ -3,3 +3,4 @@ npm-debug.log*
 .DS_Store
 # runtime data
 server/data/volunteers.json
+server/data/optimize-state.json

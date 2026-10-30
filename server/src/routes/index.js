@@ -19,7 +19,7 @@ router.get('/', (_req, res) => res.json({
     '/api/anomalies', '/api/forecasts', '/api/biodiversity',
     '/api/maintenance', '/api/optimize', '/api/recovery',
     '/api/emergency', '/api/reports', '/api/citizen',
-    '/api/assistant'
+    '/api/volunteers', '/api/assistant'
   ]
 }));
 
@@ -57,6 +57,15 @@ router.get('/recovery',       wrap(async (_req, res) => res.json({ programs: awa
 router.get('/emergency',      wrap(async (_req, res) => res.json({ alerts: await S.emergency() })));
 router.get('/reports',        wrap(async (_req, res) => res.json({ reports: await S.reports() })));
 router.get('/citizen',        wrap(async (_req, res) => res.json({ tickets: await S.citizen() })));
+
+// volunteers (public sign-ups; authorities accept/reject)
+const V = require('../../data/volunteers');
+router.get('/volunteers',       wrap(async (req, res) => {
+  const ids = req.query.ids ? String(req.query.ids).split(',').filter(Boolean) : null;
+  res.json({ volunteers: await V.list({ ids, status: req.query.status }), areas: V.AREAS });
+}));
+router.post('/volunteers',      wrap(async (req, res) => res.status(201).json(await V.create(req.body))));
+router.patch('/volunteers/:id', wrap(async (req, res) => res.json(await V.decide(req.params.id, req.body))));
 
 // assistant
 router.get('/assistant/models', wrap(async (_req, res) => res.json(await S.getOllamaModels())));

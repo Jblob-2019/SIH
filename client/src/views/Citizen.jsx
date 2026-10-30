@@ -21,7 +21,82 @@ const channels = [
   { nm: 'IVR helpline', pct: 4,  v: 9 }
 ];
 
-export default function Citizen() {
+const fmtWhen = iso => (iso ? new Date(iso).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
+const volPill = s => (s === 'accepted' ? 'pill ok' : s === 'rejected' ? 'pill crit' : 'pill warn');
+
+/* Authorities-only panel: every volunteer request, with accept / reject. */
+function VolunteerRequests() {
+  const v = useApi(api.volunteers);
+  const [filter, setFilter] = useState('pending');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const all = (v.data && v.data.volunteers) || [];
+  const counts = useMemo(() => {
+    const c = { pending: 0, accepted: 0, rejected: 0 };
+    all.forEach(x => { c[x.status] = (c[x.status] || 0) + 1; });
+    return c;
+  }, [all]);
+  const shown = filter === 'all' ? all : all.filter(x => x.status === filter);
+
+  async function decide(id, status) {
+    setBusy(id); setError('');
+    try {
+      await api.decideVolunteer(id, status);
+      v.refetch();
+    } catch (err) {
+      setError(err.message || 'Could not update the request');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="card glass" style={{ marginBottom: 12 }}>
+      <div className="card-h">
+        <h3>Volunteer requests</h3>
+        <div className="right">{counts.pending} pending · {counts.accepted} accepted · {counts.rejected} not accepted</div>
+      </div>
+      <div className="tag-row" style={{ marginBottom: 8 }}>
+        {['pending', 'accepted', 'rejected', 'all'].map(f => (
+          <span key={f} className={'tag' + (filter === f ? ' active' : '')} style={{ cursor: 'pointer' }} onClick={() => setFilter(f)}>
+            {f === 'rejected' ? 'not accepted' : f}
+          </span>
+        ))}
+      </div>
+      {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>{error}</div>}
+      <div className="tbl-wrap" style={{ border: 0, background: 'transparent' }}>
+        <table className="tbl">
+          <thead><tr><th>ID</th><th>Volunteer</th><th>Contact</th><th>Lake</th><th>Can help with</th><th>Available</th><th>Submitted</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {shown.length === 0 && (
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 16 }}>{v.loading ? 'Loading…' : v.error ? `Failed to load: ${v.error.message}` : `No ${filter === 'all' ? '' : (filter === 'rejected' ? 'not accepted ' : filter + ' ')}volunteer requests.`}</td></tr>
+            )}
+            {shown.map(x => (
+              <tr key={x.id}>
+                <td className="num" style={{ color: 'var(--surface-tint)' }}>{x.id}</td>
+                <td className="label" title={x.notes || ''}>{x.name}</td>
+                <td>{x.contact}</td>
+                <td>{x.lake || 'Any'}</td>
+                <td>{x.areas.join(', ')}</td>
+                <td>{x.availability || '—'}</td>
+                <td className="num">{fmtWhen(x.createdAt)}</td>
+                <td><span className={volPill(x.status)}><span className="pip" />{x.status === 'rejected' ? 'not accepted' : x.status}</span></td>
+                <td className="row-actions" style={{ whiteSpace: 'nowrap' }}>
+                  {x.status !== 'accepted' && <button className="btn small pri" disabled={busy === x.id} onClick={() => decide(x.id, 'accepted')}>Accept</button>}{' '}
+                  {x.status === 'pending' && <button className="btn small" disabled={busy === x.id} onClick={() => decide(x.id, 'rejected')}>Decline</button>}
+                  {x.status === 'accepted' && <button className="btn small" disabled={busy === x.id} onClick={() => decide(x.id, 'pending')}>Undo</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default function Citizen({ user }) {
   const c = useApi(api.citizen);
   const live = (c.data && c.data.tickets) || [];
 
@@ -75,6 +150,8 @@ export default function Citizen() {
         <div><h1>Citizen Reports</h1><div className="sub">42 new · 128 resolved · 18 under review · mobile + WhatsApp + portal</div></div>
         <div className="actions"><button className="btn">Triage</button><button className="btn pri">Broadcast alert</button></div>
       </div>
+
+      {user && user.role === 'admin' && <VolunteerRequests />}
 
       {/* Submission form */}
       <div className="card glass submit-card">

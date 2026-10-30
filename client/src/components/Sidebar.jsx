@@ -37,6 +37,7 @@ const NAV = [
     head: 'Public',
     items: [
       { id: 'citizen',     label: 'Citizen Reports',  href: '#citizen'     },
+      { id: 'volunteer',   label: 'Volunteer',        href: '#volunteer'   },
       { id: 'reports',     label: 'Reports',          href: '#reports'     }
     ]
   },
@@ -66,6 +67,7 @@ const Ico = ({ name }) => {
     case 'optimize':   return (<svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>);
     case 'recovery':   return (<svg viewBox="0 0 24 24" {...s}><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v6h-6"/></svg>);
     case 'maint':      return (<svg viewBox="0 0 24 24" {...s}><path d="M14 4l6 6-4 4-6-6 4-4z"/><path d="M10 8l-7 7v5h5l7-7"/></svg>);
+    case 'volunteer':  return (<svg viewBox="0 0 24 24" {...s}><path d="M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z"/></svg>);
     case 'citizen':    return (<svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>);
     case 'reports':    return (<svg viewBox="0 0 24 24" {...s}><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>);
     case 'assistant':  return (<svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9 15c1 1 4 1 6 0"/></svg>);
@@ -90,9 +92,10 @@ export default function Sidebar({ active, metrics, online, user, onLogout }) {
         {NAV.map(group => {
           // Filter items based on role
           const filteredItems = group.items.filter(it => {
-            if (!user || user.role === 'admin') return true;
+            // authorities review volunteer requests inside Citizen Reports, so they don't get the sign-up page
+            if (!user || user.role === 'admin') return it.id !== 'volunteer';
             if (user.role === 'citizen') {
-              return ['dashboard', 'map', 'lakes', 'citizen', 'biodiversity'].includes(it.id);
+              return ['dashboard', 'map', 'lakes', 'citizen', 'volunteer', 'biodiversity'].includes(it.id);
             }
             return false;
           });

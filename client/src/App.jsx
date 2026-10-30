@@ -18,6 +18,7 @@ import Optimize     from './views/Optimize.jsx';
 import Recovery     from './views/Recovery.jsx';
 import Maintenance  from './views/Maintenance.jsx';
 import Citizen      from './views/Citizen.jsx';
+import Volunteer    from './views/Volunteer.jsx';
 import Reports      from './views/Reports.jsx';
 import Assistant    from './views/Assistant.jsx';
 import Admin        from './views/Admin.jsx';
@@ -39,6 +40,7 @@ const VIEWS = {
   recovery: Recovery,
   maintenance: Maintenance,
   citizen: Citizen,
+  volunteer: Volunteer,
   reports: Reports,
   assistant: Assistant,
   admin: Admin
@@ -112,7 +114,7 @@ export default function App() {
         <Topbar active={route} />
         <div className="content">
           <section className="views">
-            <View />
+            <View user={user} />
           </section>
         </div>
       </main>

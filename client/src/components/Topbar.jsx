@@ -68,6 +68,7 @@ const TITLES = {
   recovery: 'Recovery',
   maintenance: 'Maintenance',
   citizen: 'Citizen Reports',
+  volunteer: 'Volunteer',
   reports: 'Reports',
   assistant: 'AI Assistant',
   admin: 'Administration'

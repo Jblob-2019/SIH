@@ -43,6 +43,9 @@ export const api = {
   emergency:    () => request('/api/emergency'),
   reports:      () => request('/api/reports'),
   citizen:      () => request('/api/citizen'),
+  volunteers:   (ids) => request('/api/volunteers' + (ids ? '?ids=' + encodeURIComponent(ids.join(',')) : '')),
+  createVolunteer: (b) => request('/api/volunteers', { method: 'POST', body: b }),
+  decideVolunteer: (id, status) => request('/api/volunteers/' + encodeURIComponent(id), { method: 'PATCH', body: { status } }),
   getModels:    () => request('/api/assistant/models'),
   assistant:    (prompt, model) => request('/api/assistant', { method: 'POST', body: { prompt, model } }),
   health:       () => request('/api/health')
